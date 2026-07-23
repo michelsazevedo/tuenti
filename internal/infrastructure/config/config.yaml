@@ -1,0 +1,17 @@
+database:
+  host: "${POSTGRES_HOST}"
+  username: "${POSTGRES_USER}"
+  password: "${POSTGRES_PASSWORD}"
+  database: "${POSTGRES_DB}"
+  timeout: 5s
+  pool_size: 5
+
+settings:
+  secret: "YuDs1atWq3klVr2osUw8"
+  application_name: husky
+  environment: "${ENV_APP}"
+  server:
+    port: ":8080"
+
+observability:
+  otlp_endpoint: "${OTLP_ENDPOINT}"
