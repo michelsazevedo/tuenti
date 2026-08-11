@@ -11,6 +11,7 @@ services:
     depends_on:
       - db
       - jaeger
+      - redis
     stdin_open: true
     tty: true
     environment:
@@ -20,6 +21,8 @@ services:
       - POSTGRES_HOST=db:5432
       - ENV_APP=development
       - OTLP_ENDPOINT=jaeger:4318
+      - REDIS_HOST=redis:6379
+      - REDIS_PASSWORD=
 
   web:
     <<: *base
@@ -50,6 +53,15 @@ services:
     environment:
       - COLLECTOR_OTLP_ENABLED=true
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+
 volumes:
   db_data:
+  redis_data:
   go_build_cache:

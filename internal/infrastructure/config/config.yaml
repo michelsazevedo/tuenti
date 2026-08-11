@@ -15,3 +15,8 @@ settings:
 
 observability:
   otlp_endpoint: "${OTLP_ENDPOINT}"
+
+redis:
+  host: "${REDIS_HOST}"
+  password: "${REDIS_PASSWORD}"
+  db: 0

@@ -28,6 +28,13 @@ type Observability struct {
 	OTLPEndpoint string `yaml:"otlp_endpoint" validate:"omitempty,url"`
 }
 
+// Redis ...
+type Redis struct {
+	Host     string `yaml:"host"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
+}
+
 // Server ...
 type Server struct {
 	Port string `yaml:"port"`
@@ -46,6 +53,7 @@ type Settings struct {
 type Config struct {
 	Database      Database      `yaml:"database" validate:"required"`
 	Observability Observability `yaml:"observability"`
+	Redis         Redis         `yaml:"redis"`
 	Settings      Settings      `yaml:"settings" validate:"required"`
 }
 
@@ -89,9 +97,17 @@ func (c *Config) GetPoolSize() int32 {
 	return int32(c.Database.PoolSize)
 }
 
+func (c *Config) GetRedisAddr() string {
+	return c.Redis.Host
+}
+
 func (c *Config) withDefaults() *Config {
 	if c.Database.Host == "" {
 		c.Database.Host = "localhost:5432"
+	}
+
+	if c.Redis.Host == "" {
+		c.Redis.Host = "localhost:6379"
 	}
 
 	if c.Database.Timeout == 0 {
