@@ -23,6 +23,8 @@ func Identity() fx.Option {
 			},
 			application.NewSignup,
 			application.NewSignin,
+			application.NewRefresh,
+			application.NewLogout,
 			fx.Annotate(api.NewAuthzHandler, fx.As(new(api.AuthzHandler))),
 		),
 	)

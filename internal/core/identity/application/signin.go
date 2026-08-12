@@ -2,8 +2,6 @@ package application
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"time"
 
@@ -58,12 +56,8 @@ func (s *signin) SignIn(ctx context.Context, email, password string) (*TokenPair
 		return nil, err
 	}
 
-	refreshToken, err := newRefreshToken()
+	refreshToken, err := s.refreshStore.Save(ctx, user.Id.String(), refreshTokenTTL)
 	if err != nil {
-		return nil, err
-	}
-
-	if err := s.refreshStore.Save(ctx, refreshToken, user.Id.String(), refreshTokenTTL); err != nil {
 		return nil, err
 	}
 
@@ -82,14 +76,4 @@ func (s *signin) newAccessToken(subject string) (string, error) {
 	}
 
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.secret))
-}
-
-func newRefreshToken() (string, error) {
-	buf := make([]byte, 32)
-
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-
-	return base64.RawURLEncoding.EncodeToString(buf), nil
 }

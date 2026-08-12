@@ -10,4 +10,6 @@ func RegisterRoutes(e *echo.Echo, healthz HealthzHandler, authz api.AuthzHandler
 	e.GET("/healthz", healthz.HealthCheck)
 	e.POST("/signup", authz.Signup)
 	e.POST("/signin", authz.Signin)
+	e.POST("/refresh", authz.Refresh)
+	e.POST("/logout", authz.Logout)
 }

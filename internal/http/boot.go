@@ -6,6 +6,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/rs/zerolog/log"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 	"go.uber.org/fx"
 
@@ -53,10 +54,23 @@ func HTTPErrorHandler(err error, c echo.Context) {
 		return
 	}
 
-	if httpErr, ok := err.(*echo.HTTPError); ok {
-		code := httpErr.Code
-		msg := http.StatusText(httpErr.Code)
+	code := http.StatusInternalServerError
 
-		c.JSON(code, map[string]string{"message": msg})
+	if httpErr, ok := err.(*echo.HTTPError); ok {
+		code = httpErr.Code
+	} else {
+		event := log.Error().Err(err).
+			Str("method", c.Request().Method).
+			Str("uri", c.Request().RequestURI)
+
+		if id := observability.CorrelationID(c.Request().Context()); id != "" {
+			event = event.Str("correlation_id", id)
+		}
+
+		event.Msg("unhandled error, responding 500")
+	}
+
+	if err := c.JSON(code, map[string]string{"message": http.StatusText(code)}); err != nil {
+		log.Error().Err(err).Msg("failed to write error response")
 	}
 }

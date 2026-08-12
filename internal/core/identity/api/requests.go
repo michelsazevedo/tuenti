@@ -34,3 +34,19 @@ type SigninRequest struct {
 func (r *SigninRequest) Validate() error {
 	return validate.Struct(r)
 }
+
+type RefreshRequest struct {
+	RefreshToken string `json:"refresh_token" validate:"required"`
+}
+
+func (r *RefreshRequest) Validate() error {
+	return validate.Struct(r)
+}
+
+type LogoutRequest struct {
+	RefreshToken string `json:"refresh_token" validate:"required"`
+}
+
+func (r *LogoutRequest) Validate() error {
+	return validate.Struct(r)
+}
