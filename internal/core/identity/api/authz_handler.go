@@ -46,7 +46,7 @@ func (h *authzHandler) Signup(c echo.Context) error {
 
 	user := req.ToDomain()
 
-	if err := h.signup.SignUp(c.Request().Context(), user); err != nil {
+	if err := h.signup.SignUp(c.Request().Context(), user, req.OrganizationName); err != nil {
 		if errors.Is(err, domain.ErrUserAlreadyExists) {
 			return echo.NewHTTPError(http.StatusConflict, "user already exists")
 		}

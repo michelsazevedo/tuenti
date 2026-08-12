@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/michelsazevedo/tuenti/internal/core/identity"
+	"github.com/michelsazevedo/tuenti/internal/core/organization"
 	"github.com/michelsazevedo/tuenti/internal/http"
 	"github.com/michelsazevedo/tuenti/internal/http/logging"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
@@ -18,6 +19,7 @@ func main() {
 		redis.Redis(),
 		observability.Telemetry(),
 		identity.Identity(),
+		organization.Organization(),
 		http.Http(),
 	)
 
