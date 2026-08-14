@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	refreshTokenKeyPrefix  = "refresh_token:"
-	refreshFamilyKeyPrefix = "refresh_family:"
-	refreshUsedKeyPrefix   = "refresh_token_used:"
+	refreshTokenKeyPrefix        = "refresh_token:"
+	refreshFamilyKeyPrefix       = "refresh_family:"
+	refreshUsedKeyPrefix         = "refresh_token_used:"
+	refreshUserSessionsKeyPrefix = "user_sessions:"
 )
 
 const (
@@ -78,6 +79,7 @@ local family_pfx   = ARGV[5]
 local token_pfx    = ARGV[6]
 local grace        = tonumber(ARGV[7])
 local default_family_expiry = tonumber(ARGV[8])
+local session_pfx  = ARGV[9]
 
 local record = redis.call('HMGET', token_key, 'user_id', 'family_id', 'expires_at', 'family_expires_at')
 local user_id       = record[1]
@@ -104,6 +106,10 @@ if not family_id then
   local family_key = family_pfx .. tombstoned_family
   local live_hash = redis.call('GET', family_key)
   if live_hash then
+    local victim_user = redis.call('HGET', token_pfx .. live_hash, 'user_id')
+    if victim_user then
+      redis.call('SREM', session_pfx .. victim_user, tombstoned_family)
+    end
     redis.call('DEL', token_pfx .. live_hash)
   end
   redis.call('DEL', family_key)
@@ -144,13 +150,17 @@ var revokeScript = goredis.NewScript(luaParseTombstone + `
 local token_key = KEYS[1]
 local used_key  = KEYS[2]
 
-local family_pfx = ARGV[1]
-local token_pfx  = ARGV[2]
+local family_pfx  = ARGV[1]
+local token_pfx   = ARGV[2]
+local session_pfx = ARGV[3]
 
 local outcome   = 'live'
 local family_id = redis.call('HGET', token_key, 'family_id')
+local user_id   = nil
 
-if not family_id then
+if family_id then
+  user_id = redis.call('HGET', token_key, 'user_id')
+else
   local tombstone = redis.call('GET', used_key)
   if not tombstone then
     return {'miss'}
@@ -163,12 +173,37 @@ end
 local family_key = family_pfx .. family_id
 local live_hash = redis.call('GET', family_key)
 if live_hash then
+  if not user_id then
+    user_id = redis.call('HGET', token_pfx .. live_hash, 'user_id')
+  end
   redis.call('DEL', token_pfx .. live_hash)
 end
 
 redis.call('DEL', family_key, token_key)
 
+if user_id then
+  redis.call('SREM', session_pfx .. user_id, family_id)
+end
+
 return {outcome, family_id}
+`)
+
+var revokeAllScript = goredis.NewScript(`
+local session_key = KEYS[1]
+local family_pfx  = ARGV[1]
+local token_pfx   = ARGV[2]
+
+local family_ids = redis.call('SMEMBERS', session_key)
+for _, family_id in ipairs(family_ids) do
+  local family_key = family_pfx .. family_id
+  local live_hash = redis.call('GET', family_key)
+  if live_hash then
+    redis.call('DEL', token_pfx .. live_hash)
+  end
+  redis.call('DEL', family_key)
+end
+redis.call('DEL', session_key)
+return #family_ids
 `)
 
 type RefreshTokenStore struct {
@@ -214,6 +249,8 @@ func (s *RefreshTokenStore) Save(ctx context.Context, userID string, ttl time.Du
 		)
 		pipe.Expire(ctx, tokenKey(tokenHash), keyTTL)
 		pipe.Set(ctx, familyKey(familyID), tokenHash, keyTTL)
+		pipe.SAdd(ctx, userSessionsKey(userID), familyID)
+		pipe.Expire(ctx, userSessionsKey(userID), familyAbsoluteLifetime)
 
 		return nil
 	})
@@ -272,6 +309,7 @@ func (s *RefreshTokenStore) Rotate(ctx context.Context, rawToken string, ttl tim
 		refreshTokenKeyPrefix,
 		int64(rotationGraceWindow.Seconds()),
 		now.Add(familyAbsoluteLifetime).Unix(),
+		refreshUserSessionsKeyPrefix,
 	}
 
 	reply, err := rotateScript.Run(ctx, s.client, keys, args...).StringSlice()
@@ -317,7 +355,7 @@ func (s *RefreshTokenStore) Revoke(ctx context.Context, rawToken string) error {
 	tokenHash := domain.HashRefreshToken(rawToken)
 
 	keys := []string{tokenKey(tokenHash), usedKey(tokenHash)}
-	args := []any{refreshFamilyKeyPrefix, refreshTokenKeyPrefix}
+	args := []any{refreshFamilyKeyPrefix, refreshTokenKeyPrefix, refreshUserSessionsKeyPrefix}
 
 	reply, err := revokeScript.Run(ctx, s.client, keys, args...).StringSlice()
 	if err != nil {
@@ -341,6 +379,17 @@ func (s *RefreshTokenStore) Revoke(ctx context.Context, rawToken string) error {
 	default:
 		return fmt.Errorf("revoking refresh token: unknown script outcome %q", reply[0])
 	}
+}
+
+func (s *RefreshTokenStore) RevokeAllForUser(ctx context.Context, userID string) error {
+	keys := []string{userSessionsKey(userID)}
+	args := []any{refreshFamilyKeyPrefix, refreshTokenKeyPrefix}
+
+	if err := revokeAllScript.Run(ctx, s.client, keys, args...).Err(); err != nil {
+		return fmt.Errorf("revoking all refresh tokens for user %s: %w", userID, err)
+	}
+
+	return nil
 }
 
 func logFamilyEvent(ctx context.Context, level zerolog.Level, name, tokenHash string, reply []string, message string) {
@@ -389,8 +438,9 @@ func newFamilyID() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func tokenKey(tokenHash string) string { return refreshTokenKeyPrefix + tokenHash }
-func familyKey(familyID string) string { return refreshFamilyKeyPrefix + familyID }
-func usedKey(tokenHash string) string  { return refreshUsedKeyPrefix + tokenHash }
+func tokenKey(tokenHash string) string     { return refreshTokenKeyPrefix + tokenHash }
+func familyKey(familyID string) string     { return refreshFamilyKeyPrefix + familyID }
+func usedKey(tokenHash string) string      { return refreshUsedKeyPrefix + tokenHash }
+func userSessionsKey(userID string) string { return refreshUserSessionsKeyPrefix + userID }
 
 var _ domain.RefreshTokenStore = (*RefreshTokenStore)(nil)

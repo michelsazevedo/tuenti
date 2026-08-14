@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/michelsazevedo/tuenti/internal/core/identity/domain"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
@@ -14,6 +15,8 @@ import (
 const createUser = `INSERT INTO users(name, email, password_digest) VALUES($1, $2, $3) RETURNING id`
 
 const findUserByEmail = `SELECT id, name, email, password_digest, created_at, updated_at FROM users WHERE email = $1`
+
+const updateUserPasswordDigest = `UPDATE users SET password_digest = $2, updated_at = now() WHERE id = $1`
 
 const uniqueViolationCode = "23505"
 
@@ -54,4 +57,10 @@ func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*domain
 	}
 
 	return user, nil
+}
+
+func (r *UserRepository) UpdatePasswordDigest(ctx context.Context, userID pgtype.UUID, passwordDigest string) error {
+	_, err := r.db.Exec(ctx, updateUserPasswordDigest, userID, passwordDigest)
+
+	return err
 }

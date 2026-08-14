@@ -32,6 +32,10 @@ type TokenResponse struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
+type MessageResponse struct {
+	Message string `json:"message"`
+}
+
 func NewTokenResponse(tokens *application.TokenPair) TokenResponse {
 	return TokenResponse{
 		AccessToken:  tokens.AccessToken,

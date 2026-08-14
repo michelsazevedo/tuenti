@@ -23,6 +23,9 @@ services:
       - OTLP_ENDPOINT=jaeger:4318
       - REDIS_HOST=redis:6379
       - REDIS_PASSWORD=
+      - RESEND_API_KEY=test-key
+      - RESEND_FROM_EMAIL=test@example.com
+      - PASSWORD_RESET_BASE_URL=http://localhost:3000/reset-password
 
   web:
     <<: *base

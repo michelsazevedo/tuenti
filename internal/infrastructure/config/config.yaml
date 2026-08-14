@@ -10,6 +10,7 @@ settings:
   secret: "YuDs1atWq3klVr2osUw8"
   application_name: husky
   environment: "${ENV_APP}"
+  password_reset_base_url: "${PASSWORD_RESET_BASE_URL}"
   server:
     port: ":8080"
 
@@ -20,3 +21,7 @@ redis:
   host: "${REDIS_HOST}"
   password: "${REDIS_PASSWORD}"
   db: 0
+
+resend:
+  api_key: "${RESEND_API_KEY}"
+  from_email: "${RESEND_FROM_EMAIL}"

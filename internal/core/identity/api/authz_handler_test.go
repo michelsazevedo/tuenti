@@ -46,7 +46,7 @@ func callSignup(t *testing.T, signup application.SignupUseCase, body string) *ht
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	handler := NewAuthzHandler(signup, nil, nil, nil)
+	handler := NewAuthzHandler(signup, nil, nil, nil, nil, nil)
 
 	if err := handler.Signup(c); err != nil {
 		e.HTTPErrorHandler(err, c)
@@ -160,7 +160,7 @@ func callRefresh(t *testing.T, refresh application.RefreshUseCase, body string) 
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	handler := NewAuthzHandler(nil, nil, nil, refresh)
+	handler := NewAuthzHandler(nil, nil, nil, refresh, nil, nil)
 
 	if err := handler.Refresh(c); err != nil {
 		e.HTTPErrorHandler(err, c)
@@ -260,4 +260,261 @@ func TestRefreshMapsInfrastructureFailuresTo500(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.NotContains(t, rec.Body.String(), "redis", "infrastructure detail must not reach the client")
+}
+
+type fakeRequestPasswordResetUseCase struct {
+	err error
+
+	calls int
+	email string
+}
+
+func (f *fakeRequestPasswordResetUseCase) RequestPasswordReset(_ context.Context, email string) error {
+	f.calls++
+	f.email = email
+
+	if f.err != nil {
+		return f.err
+	}
+
+	return nil
+}
+
+func callRequestPasswordReset(
+	t *testing.T, usecase application.RequestPasswordResetUseCase, body string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/password-reset", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	handler := NewAuthzHandler(nil, nil, nil, nil, usecase, nil)
+
+	if err := handler.RequestPasswordReset(c); err != nil {
+		e.HTTPErrorHandler(err, c)
+	}
+
+	return rec
+}
+
+func TestRequestPasswordResetIsIndistinguishableAcrossAddresses(t *testing.T) {
+	addresses := []struct {
+		name  string
+		email string
+	}{
+		{name: "registered address", email: "wile@example.com"},
+		{name: "unregistered address", email: "nobody-here@example.com"},
+	}
+
+	type response struct {
+		code        int
+		body        string
+		contentType string
+	}
+
+	responses := make(map[string]response, len(addresses))
+
+	for _, address := range addresses {
+		t.Run(address.name, func(t *testing.T) {
+			usecase := &fakeRequestPasswordResetUseCase{}
+
+			rec := callRequestPasswordReset(t, usecase, `{"email":"`+address.email+`"}`)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			assert.JSONEq(t,
+				`{"message":"if an account exists for this email, a password reset link has been sent"}`,
+				rec.Body.String())
+
+			require.Equal(t, 1, usecase.calls)
+			assert.Equal(t, address.email, usecase.email, "the address must reach the use case verbatim")
+			assert.NotContains(t, rec.Body.String(), address.email,
+				"echoing the address back would confirm what the caller submitted was even read")
+
+			responses[address.name] = response{
+				code:        rec.Code,
+				body:        rec.Body.String(),
+				contentType: rec.Header().Get(echo.HeaderContentType),
+			}
+		})
+	}
+
+	require.Len(t, responses, len(addresses))
+
+	baseline := responses["registered address"]
+
+	for name, got := range responses {
+		assert.Equal(t, baseline, got,
+			"%s must be byte-identical to the registered-address response, or the endpoint enumerates accounts", name)
+	}
+}
+
+func TestRequestPasswordResetRejectsMalformedRequests(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		code int
+	}{
+		{name: "unparseable body", body: `{"email":`, code: http.StatusBadRequest},
+		{name: "missing email", body: `{}`, code: http.StatusUnprocessableEntity},
+		{name: "empty email", body: `{"email":""}`, code: http.StatusUnprocessableEntity},
+		{name: "malformed email", body: `{"email":"not-an-address"}`, code: http.StatusUnprocessableEntity},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			usecase := &fakeRequestPasswordResetUseCase{}
+
+			rec := callRequestPasswordReset(t, usecase, test.body)
+
+			assert.Equal(t, test.code, rec.Code)
+			assert.Zero(t, usecase.calls, "a rejected request must never reach the use case")
+		})
+	}
+}
+
+func TestRequestPasswordResetMapsInfrastructureFailuresTo500(t *testing.T) {
+	usecase := &fakeRequestPasswordResetUseCase{err: errors.New("pgx: connection refused")}
+
+	rec := callRequestPasswordReset(t, usecase, `{"email":"wile@example.com"}`)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "pgx", "infrastructure detail must not reach the client")
+}
+
+type fakeConfirmPasswordResetUseCase struct {
+	err error
+
+	calls       int
+	token       string
+	newPassword string
+}
+
+func (f *fakeConfirmPasswordResetUseCase) ConfirmPasswordReset(_ context.Context, rawToken, newPassword string) error {
+	f.calls++
+	f.token = rawToken
+	f.newPassword = newPassword
+
+	if f.err != nil {
+		return f.err
+	}
+
+	return nil
+}
+
+func callConfirmPasswordReset(
+	t *testing.T, usecase application.ConfirmPasswordResetUseCase, body string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/password-reset/confirm", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	handler := NewAuthzHandler(nil, nil, nil, nil, nil, usecase)
+
+	if err := handler.ConfirmPasswordReset(c); err != nil {
+		e.HTTPErrorHandler(err, c)
+	}
+
+	return rec
+}
+
+func TestConfirmPasswordResetAcceptsAValidToken(t *testing.T) {
+	usecase := &fakeConfirmPasswordResetUseCase{}
+
+	rec := callConfirmPasswordReset(t, usecase, `{"token":"presented-token","new_password":"supersecret"}`)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"message":"password has been reset"}`, rec.Body.String())
+
+	require.Equal(t, 1, usecase.calls)
+	assert.Equal(t, "presented-token", usecase.token, "the presented token must reach the use case verbatim")
+	assert.Equal(t, "supersecret", usecase.newPassword)
+	assert.NotContains(t, rec.Body.String(), "supersecret", "the new password must never be echoed back")
+}
+
+func TestConfirmPasswordResetRejectsMalformedRequests(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		code int
+	}{
+		{name: "unparseable body", body: `{"token":`, code: http.StatusBadRequest},
+		{name: "missing token", body: `{"new_password":"supersecret"}`, code: http.StatusUnprocessableEntity},
+		{
+			name: "empty token",
+			body: `{"token":"","new_password":"supersecret"}`,
+			code: http.StatusUnprocessableEntity,
+		},
+		{name: "missing password", body: `{"token":"presented-token"}`, code: http.StatusUnprocessableEntity},
+		{
+			name: "password under the minimum length",
+			body: `{"token":"presented-token","new_password":"short"}`,
+			code: http.StatusUnprocessableEntity,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			usecase := &fakeConfirmPasswordResetUseCase{}
+
+			rec := callConfirmPasswordReset(t, usecase, test.body)
+
+			assert.Equal(t, test.code, rec.Code)
+			assert.Zero(t, usecase.calls, "a rejected request must never reach the use case")
+		})
+	}
+}
+
+func TestConfirmPasswordResetTokenFailuresAreIndistinguishable(t *testing.T) {
+	failures := []error{
+		domain.ErrPasswordResetTokenInvalid,
+		domain.ErrPasswordResetTokenExpired,
+		domain.ErrPasswordResetTokenUsed,
+	}
+
+	type response struct {
+		code int
+		body string
+	}
+
+	responses := make(map[string]response, len(failures))
+
+	for _, failure := range failures {
+		t.Run(failure.Error(), func(t *testing.T) {
+			usecase := &fakeConfirmPasswordResetUseCase{err: fmt.Errorf("password reset token: %w", failure)}
+
+			rec := callConfirmPasswordReset(t, usecase, `{"token":"presented-token","new_password":"supersecret"}`)
+
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+			assert.JSONEq(t, `{"message":"invalid or expired reset token"}`, rec.Body.String())
+			assert.NotContains(t, rec.Body.String(), failure.Error(),
+				"the specific verdict must not reach the client")
+
+			responses[failure.Error()] = response{code: rec.Code, body: rec.Body.String()}
+		})
+	}
+
+	require.Len(t, responses, len(failures))
+
+	baseline := responses[domain.ErrPasswordResetTokenInvalid.Error()]
+	assert.Equal(t, http.StatusUnauthorized, baseline.code)
+
+	for name, got := range responses {
+		assert.Equal(t, baseline, got, "%s must be byte-identical to the plain invalid-token response", name)
+	}
+}
+
+func TestConfirmPasswordResetMapsInfrastructureFailuresTo500(t *testing.T) {
+	usecase := &fakeConfirmPasswordResetUseCase{err: errors.New("pgx: connection refused")}
+
+	rec := callConfirmPasswordReset(t, usecase, `{"token":"presented-token","new_password":"supersecret"}`)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "pgx", "infrastructure detail must not reach the client")
 }

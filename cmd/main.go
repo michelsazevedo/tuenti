@@ -8,6 +8,7 @@ import (
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/observability"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/redis"
+	"github.com/michelsazevedo/tuenti/internal/infrastructure/resend"
 
 	"go.uber.org/fx"
 )
@@ -17,6 +18,7 @@ func main() {
 		fx.WithLogger(logging.NewZerologfx),
 		database.Db(),
 		redis.Redis(),
+		resend.Resend(),
 		observability.Telemetry(),
 		identity.Identity(),
 		organization.Organization(),

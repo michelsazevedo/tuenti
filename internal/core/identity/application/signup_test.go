@@ -29,6 +29,9 @@ func newTestPgConn(t *testing.T) *database.PgConn {
 	setDefaultEnv(t, "POSTGRES_USER", "tuenti")
 	setDefaultEnv(t, "POSTGRES_PASSWORD", "tuentipwd")
 	setDefaultEnv(t, "POSTGRES_DB", "tuenti")
+	setDefaultEnv(t, "RESEND_API_KEY", "test-key")
+	setDefaultEnv(t, "RESEND_FROM_EMAIL", "test@example.com")
+	setDefaultEnv(t, "PASSWORD_RESET_BASE_URL", "http://localhost:3000/reset-password")
 
 	conf, err := config.NewConfig()
 	require.NoError(t, err, "invalid test configuration")

@@ -29,6 +29,10 @@ func (s *revokeSpyStore) Rotate(ctx context.Context, rawToken string, ttl time.D
 	return "", "", errors.New("unexpected call to Rotate")
 }
 
+func (s *revokeSpyStore) RevokeAllForUser(ctx context.Context, userID string) error {
+	return errors.New("unexpected call to RevokeAllForUser")
+}
+
 func (s *revokeSpyStore) Revoke(ctx context.Context, rawToken string) error {
 	s.revokeCalls++
 	s.revokedToken = rawToken

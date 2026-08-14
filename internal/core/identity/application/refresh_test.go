@@ -36,6 +36,10 @@ func (f *fakeRefreshTokenStore) Revoke(context.Context, string) error {
 	panic("Revoke must not be called by the refresh use case")
 }
 
+func (f *fakeRefreshTokenStore) RevokeAllForUser(context.Context, string) error {
+	panic("RevokeAllForUser must not be called by the refresh use case")
+}
+
 func (f *fakeRefreshTokenStore) Validate(context.Context, string) (*domain.RefreshToken, error) {
 	panic("Validate must not gate the refresh path: it cannot see reuse, so it would suppress family revocation")
 }

@@ -21,10 +21,15 @@ func Identity() fx.Option {
 			func(client *goredis.Client) domain.RefreshTokenStore {
 				return persistence.NewRefreshTokenStore(client)
 			},
+			func(pg *database.PgConn) domain.PasswordResetTokenRepository {
+				return persistence.NewPasswordResetTokenRepository(pg.Pool())
+			},
 			application.NewSignup,
 			application.NewSignin,
 			application.NewRefresh,
 			application.NewLogout,
+			application.NewRequestPasswordReset,
+			application.NewConfirmPasswordReset,
 			fx.Annotate(api.NewAuthzHandler, fx.As(new(api.AuthzHandler))),
 		),
 	)

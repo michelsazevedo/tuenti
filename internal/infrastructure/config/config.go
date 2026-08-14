@@ -35,6 +35,12 @@ type Redis struct {
 	DB       int    `yaml:"db"`
 }
 
+// Resend ...
+type Resend struct {
+	APIKey    string `yaml:"api_key" validate:"required"`
+	FromEmail string `yaml:"from_email" validate:"required,email"`
+}
+
 // Server ...
 type Server struct {
 	Port string `yaml:"port"`
@@ -43,10 +49,11 @@ type Server struct {
 
 // Settings ...
 type Settings struct {
-	ApplicationName string `yaml:"application_name" validate:"required"`
-	Environment     string `yaml:"environment" validate:"oneof=development test production"`
-	Secret          string `yaml:"secret" validate:"required"`
-	Server          Server `yaml:"server"`
+	ApplicationName      string `yaml:"application_name" validate:"required"`
+	Environment          string `yaml:"environment" validate:"oneof=development test production"`
+	Secret               string `yaml:"secret" validate:"required"`
+	Server               Server `yaml:"server"`
+	PasswordResetBaseURL string `yaml:"password_reset_base_url" validate:"required,url"`
 }
 
 // Config ...
@@ -54,6 +61,7 @@ type Config struct {
 	Database      Database      `yaml:"database" validate:"required"`
 	Observability Observability `yaml:"observability"`
 	Redis         Redis         `yaml:"redis"`
+	Resend        Resend        `yaml:"resend" validate:"required"`
 	Settings      Settings      `yaml:"settings" validate:"required"`
 }
 

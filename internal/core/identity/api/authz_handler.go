@@ -15,13 +15,17 @@ type AuthzHandler interface {
 	Signin(c echo.Context) error
 	Logout(c echo.Context) error
 	Refresh(c echo.Context) error
+	RequestPasswordReset(c echo.Context) error
+	ConfirmPasswordReset(c echo.Context) error
 }
 
 type authzHandler struct {
-	signup  application.SignupUseCase
-	signin  application.SigninUseCase
-	logout  application.LogoutUseCase
-	refresh application.RefreshUseCase
+	signup               application.SignupUseCase
+	signin               application.SigninUseCase
+	logout               application.LogoutUseCase
+	refresh              application.RefreshUseCase
+	requestPasswordReset application.RequestPasswordResetUseCase
+	confirmPasswordReset application.ConfirmPasswordResetUseCase
 }
 
 func NewAuthzHandler(
@@ -29,8 +33,17 @@ func NewAuthzHandler(
 	signin application.SigninUseCase,
 	logout application.LogoutUseCase,
 	refresh application.RefreshUseCase,
+	requestPasswordReset application.RequestPasswordResetUseCase,
+	confirmPasswordReset application.ConfirmPasswordResetUseCase,
 ) AuthzHandler {
-	return &authzHandler{signup: signup, signin: signin, logout: logout, refresh: refresh}
+	return &authzHandler{
+		signup:               signup,
+		signin:               signin,
+		logout:               logout,
+		refresh:              refresh,
+		requestPasswordReset: requestPasswordReset,
+		confirmPasswordReset: confirmPasswordReset,
+	}
 }
 
 func (h *authzHandler) Signup(c echo.Context) error {
@@ -121,7 +134,54 @@ func (h *authzHandler) Refresh(c echo.Context) error {
 	return c.JSON(http.StatusOK, NewTokenResponse(tokens))
 }
 
+func (h *authzHandler) RequestPasswordReset(c echo.Context) error {
+	req := new(RequestPasswordResetRequest)
+
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	if err := req.Validate(); err != nil {
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, err.Error())
+	}
+
+	if err := h.requestPasswordReset.RequestPasswordReset(c.Request().Context(), req.Email); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	return c.JSON(http.StatusOK, MessageResponse{Message: msgPasswordResetRequested})
+}
+
+func (h *authzHandler) ConfirmPasswordReset(c echo.Context) error {
+	req := new(ConfirmPasswordResetRequest)
+
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	if err := req.Validate(); err != nil {
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, err.Error())
+	}
+
+	if err := h.confirmPasswordReset.ConfirmPasswordReset(c.Request().Context(), req.Token, req.NewPassword); err != nil {
+		if isPasswordResetTokenFailure(err) {
+			return echo.NewHTTPError(http.StatusUnauthorized, msgInvalidPasswordResetToken)
+		}
+
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	return c.JSON(http.StatusOK, MessageResponse{Message: msgPasswordResetCompleted})
+}
+
 const msgInvalidRefreshToken = "invalid refresh token"
+
+const (
+	msgPasswordResetRequested = "if an account exists for this email, a password reset link has been sent"
+	msgPasswordResetCompleted = "password has been reset"
+
+	msgInvalidPasswordResetToken = "invalid or expired reset token"
+)
 
 var refreshTokenFailures = []error{
 	domain.ErrRefreshTokenInvalid,
@@ -133,6 +193,22 @@ var refreshTokenFailures = []error{
 func isRefreshTokenFailure(err error) bool {
 	for _, refreshErr := range refreshTokenFailures {
 		if errors.Is(err, refreshErr) {
+			return true
+		}
+	}
+
+	return false
+}
+
+var passwordResetTokenFailures = []error{
+	domain.ErrPasswordResetTokenInvalid,
+	domain.ErrPasswordResetTokenExpired,
+	domain.ErrPasswordResetTokenUsed,
+}
+
+func isPasswordResetTokenFailure(err error) bool {
+	for _, tokenErr := range passwordResetTokenFailures {
+		if errors.Is(err, tokenErr) {
 			return true
 		}
 	}

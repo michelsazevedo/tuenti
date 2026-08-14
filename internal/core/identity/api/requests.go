@@ -51,3 +51,20 @@ type LogoutRequest struct {
 func (r *LogoutRequest) Validate() error {
 	return validate.Struct(r)
 }
+
+type RequestPasswordResetRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+func (r *RequestPasswordResetRequest) Validate() error {
+	return validate.Struct(r)
+}
+
+type ConfirmPasswordResetRequest struct {
+	Token       string `json:"token" validate:"required"`
+	NewPassword string `json:"new_password" validate:"required,min=8"`
+}
+
+func (r *ConfirmPasswordResetRequest) Validate() error {
+	return validate.Struct(r)
+}

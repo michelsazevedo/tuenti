@@ -11,4 +11,8 @@ var (
 	ErrRefreshTokenExpired = errors.New("refresh token expired")
 	ErrRefreshTokenRevoked = errors.New("refresh token revoked")
 	ErrRefreshTokenReused  = errors.New("refresh token reused")
+
+	ErrPasswordResetTokenInvalid = errors.New("invalid password reset token")
+	ErrPasswordResetTokenExpired = errors.New("password reset token expired")
+	ErrPasswordResetTokenUsed    = errors.New("password reset token already used")
 )

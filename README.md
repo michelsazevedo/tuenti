@@ -35,6 +35,11 @@ export POSTGRES_HOST=
 export REDIS_HOST=
 export REDIS_PASSWORD=
 
+export RESEND_API_KEY=
+export RESEND_FROM_EMAIL=
+
+export PASSWORD_RESET_BASE_URL=
+
 export ENV_APP=development
 export OTLP_ENDPOINT=
 ```
