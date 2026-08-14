@@ -20,6 +20,9 @@ func Resend() fx.Option {
 			func(client *resendgo.Client, conf *config.Config) domain.PasswordResetMailer {
 				return NewMailer(client, conf.Resend.FromEmail)
 			},
+			func(client *resendgo.Client, conf *config.Config) domain.ConfirmationMailer {
+				return NewMailer(client, conf.Resend.FromEmail)
+			},
 		),
 	)
 }

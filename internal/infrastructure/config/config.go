@@ -49,11 +49,12 @@ type Server struct {
 
 // Settings ...
 type Settings struct {
-	ApplicationName      string `yaml:"application_name" validate:"required"`
-	Environment          string `yaml:"environment" validate:"oneof=development test production"`
-	Secret               string `yaml:"secret" validate:"required"`
-	Server               Server `yaml:"server"`
-	PasswordResetBaseURL string `yaml:"password_reset_base_url" validate:"required,url"`
+	ApplicationName          string `yaml:"application_name" validate:"required"`
+	Environment              string `yaml:"environment" validate:"oneof=development test production"`
+	Secret                   string `yaml:"secret" validate:"required"`
+	Server                   Server `yaml:"server"`
+	PasswordResetBaseURL     string `yaml:"password_reset_base_url" validate:"required,url"`
+	EmailConfirmationBaseURL string `yaml:"email_confirmation_base_url" validate:"required,url"`
 }
 
 // Config ...

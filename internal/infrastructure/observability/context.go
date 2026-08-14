@@ -19,9 +19,6 @@ func CorrelationID(ctx context.Context) string {
 	return id
 }
 
-// Logger returns the global logger enriched with correlation_id, trace_id,
-// and span_id extracted from ctx, so business code doesn't need to pull
-// those fields manually at every log call site.
 func Logger(ctx context.Context) zerolog.Logger {
 	logger := log.Logger
 

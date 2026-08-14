@@ -19,17 +19,15 @@ import (
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
 )
 
-const testTimeout = 5 * time.Second
+const (
+	testTimeout = 5 * time.Second
 
-// newTestPool opens a real connection against the local Postgres. The pool
-// satisfies database.DBTX, so the repositories are exercised through the very
-// same interface they get in production (pool now, pgx.Tx inside a UnitOfWork).
+	testTrialDuration = 14 * 24 * time.Hour
+)
+
 func newTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
-	// config.NewConfig expands the POSTGRES_* variables into the embedded
-	// config.yaml; outside docker compose they are unset, so fall back to the
-	// credentials the compose `db` service publishes on localhost.
 	setDefaultEnv(t, "POSTGRES_HOST", "localhost:5432")
 	setDefaultEnv(t, "POSTGRES_USER", "tuenti")
 	setDefaultEnv(t, "POSTGRES_PASSWORD", "tuentipwd")
@@ -37,6 +35,7 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 	setDefaultEnv(t, "RESEND_API_KEY", "test-key")
 	setDefaultEnv(t, "RESEND_FROM_EMAIL", "test@example.com")
 	setDefaultEnv(t, "PASSWORD_RESET_BASE_URL", "http://localhost:3000/reset-password")
+	setDefaultEnv(t, "EMAIL_CONFIRMATION_BASE_URL", "http://localhost:3000/confirm-email")
 
 	conf, err := config.NewConfig()
 	require.NoError(t, err, "invalid test configuration")
@@ -60,8 +59,6 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 	return pgConn.Pool()
 }
 
-// requireSchema fails with an actionable message instead of a cryptic scan
-// error when the migrations have never been applied to this database.
 func requireSchema(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
@@ -85,16 +82,43 @@ func setDefaultEnv(t *testing.T, key, value string) {
 	}
 }
 
-// createTestOrganization persists an organization and schedules its deletion.
-// Cleanups run LIFO, so rows created later (memberships) are removed first,
-// which keeps the teardown foreign-key safe.
 func createTestOrganization(t *testing.T, pool *pgxpool.Pool) *domain.Organization {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
 
-	org := &domain.Organization{Name: "Acme " + randomSuffix(t)}
+	now := time.Now().UTC()
+	org := &domain.Organization{
+		Name:               "Acme " + randomSuffix(t),
+		TrialStartsAt:      now,
+		TrialEndsAt:        now.Add(testTrialDuration),
+		SubscriptionStatus: domain.Trialing,
+	}
+	require.NoError(t, NewOrganizationRepository(pool).Create(ctx, org))
+
+	deleteRow(t, pool, `DELETE FROM organizations WHERE id = $1`, org.Id)
+
+	return org
+}
+
+func createTestOrganizationWithSubscription(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	status domain.SubscriptionStatus,
+	trialEndsAt time.Time,
+) *domain.Organization {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+
+	org := &domain.Organization{
+		Name:               "Acme " + randomSuffix(t),
+		TrialStartsAt:      trialEndsAt.Add(-testTrialDuration),
+		TrialEndsAt:        trialEndsAt,
+		SubscriptionStatus: status,
+	}
 	require.NoError(t, NewOrganizationRepository(pool).Create(ctx, org))
 
 	deleteRow(t, pool, `DELETE FROM organizations WHERE id = $1`, org.Id)

@@ -32,6 +32,12 @@ func RegisterRoutes(
 		KeyPrefix: "ratelimit:password-reset-confirm",
 		Extractor: m.IPKeyExtractor,
 	})
+	resendConfirmationLimit := m.RateLimit(client, m.RateLimitConfig{
+		Max:       5,
+		Window:    passwordResetWindow,
+		KeyPrefix: "ratelimit:resend-confirmation",
+		Extractor: m.EmailAndIPKeyExtractor,
+	})
 
 	e.GET("/healthz", healthz.HealthCheck)
 	e.POST("/signup", authz.Signup)
@@ -40,5 +46,7 @@ func RegisterRoutes(
 	e.POST("/logout", authz.Logout)
 	e.POST("/password-reset", authz.RequestPasswordReset, requestResetLimit)
 	e.POST("/password-reset/confirm", authz.ConfirmPasswordReset, confirmResetLimit)
+	e.GET("/confirm-email", authz.ConfirmEmail)
+	e.POST("/resend-confirmation", authz.ResendConfirmation, resendConfirmationLimit)
 	e.GET("/organizations/:id", org.GetByID)
 }

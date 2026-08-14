@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"net/http"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -9,6 +10,31 @@ import (
 
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/observability"
 )
+
+var redactedQueryParams = []string{"token", "code", "secret", "access_token"}
+
+func RequestURI(r *http.Request) string {
+	if r.URL.RawQuery == "" {
+		return r.URL.Path
+	}
+
+	query := r.URL.Query()
+
+	redacted := false
+
+	for _, key := range redactedQueryParams {
+		if query.Has(key) {
+			query.Set(key, "[REDACTED]")
+			redacted = true
+		}
+	}
+
+	if !redacted {
+		return r.URL.Path + "?" + r.URL.RawQuery
+	}
+
+	return r.URL.Path + "?" + query.Encode()
+}
 
 func Zerolog(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
@@ -36,7 +62,7 @@ func Zerolog(next echo.HandlerFunc) echo.HandlerFunc {
 		event := level.
 			Err(err).
 			Str("method", c.Request().Method).
-			Str("uri", c.Request().RequestURI).
+			Str("uri", RequestURI(c.Request())).
 			Str("remote_ip", c.RealIP()).
 			Str("user_agent", c.Request().UserAgent()).
 			Int("status", status).

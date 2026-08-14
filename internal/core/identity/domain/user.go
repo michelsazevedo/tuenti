@@ -15,8 +15,13 @@ type User struct {
 	CreatedAt      time.Time   `json:"created_at"`
 	UpdatedAt      time.Time   `json:"updated_at"`
 	DeletedAt      time.Time   `json:"-"`
+	ConfirmedAt    *time.Time  `json:"-"`
 }
 
 func (u *User) GetAttributes() []interface{} {
 	return []interface{}{u.Name, u.Email, u.PasswordDigest}
+}
+
+func (u *User) IsConfirmed() bool {
+	return u.ConfirmedAt != nil
 }

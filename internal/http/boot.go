@@ -18,6 +18,8 @@ import (
 func NewBoot(lc fx.Lifecycle, cfg *config.Config) *echo.Echo {
 	e := echo.New()
 
+	e.IPExtractor = echo.ExtractIPDirect()
+
 	e.Use(middleware.Recover())
 	e.Use(middleware.RequestIDWithConfig(middleware.RequestIDConfig{
 		RequestIDHandler: func(c echo.Context, rid string) {
@@ -61,7 +63,7 @@ func HTTPErrorHandler(err error, c echo.Context) {
 	} else {
 		event := log.Error().Err(err).
 			Str("method", c.Request().Method).
-			Str("uri", c.Request().RequestURI)
+			Str("uri", m.RequestURI(c.Request()))
 
 		if id := observability.CorrelationID(c.Request().Context()); id != "" {
 			event = event.Str("correlation_id", id)

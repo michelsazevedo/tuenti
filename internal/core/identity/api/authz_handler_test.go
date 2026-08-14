@@ -46,7 +46,7 @@ func callSignup(t *testing.T, signup application.SignupUseCase, body string) *ht
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	handler := NewAuthzHandler(signup, nil, nil, nil, nil, nil)
+	handler := NewAuthzHandler(signup, nil, nil, nil, nil, nil, nil, nil)
 
 	if err := handler.Signup(c); err != nil {
 		e.HTTPErrorHandler(err, c)
@@ -160,7 +160,7 @@ func callRefresh(t *testing.T, refresh application.RefreshUseCase, body string) 
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	handler := NewAuthzHandler(nil, nil, nil, refresh, nil, nil)
+	handler := NewAuthzHandler(nil, nil, nil, refresh, nil, nil, nil, nil)
 
 	if err := handler.Refresh(c); err != nil {
 		e.HTTPErrorHandler(err, c)
@@ -291,7 +291,7 @@ func callRequestPasswordReset(
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	handler := NewAuthzHandler(nil, nil, nil, nil, usecase, nil)
+	handler := NewAuthzHandler(nil, nil, nil, nil, usecase, nil, nil, nil)
 
 	if err := handler.RequestPasswordReset(c); err != nil {
 		e.HTTPErrorHandler(err, c)
@@ -415,7 +415,7 @@ func callConfirmPasswordReset(
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	handler := NewAuthzHandler(nil, nil, nil, nil, nil, usecase)
+	handler := NewAuthzHandler(nil, nil, nil, nil, nil, usecase, nil, nil)
 
 	if err := handler.ConfirmPasswordReset(c); err != nil {
 		e.HTTPErrorHandler(err, c)
@@ -514,6 +514,246 @@ func TestConfirmPasswordResetMapsInfrastructureFailuresTo500(t *testing.T) {
 	usecase := &fakeConfirmPasswordResetUseCase{err: errors.New("pgx: connection refused")}
 
 	rec := callConfirmPasswordReset(t, usecase, `{"token":"presented-token","new_password":"supersecret"}`)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "pgx", "infrastructure detail must not reach the client")
+}
+
+type fakeConfirmEmailUseCase struct {
+	err error
+
+	calls int
+	token string
+}
+
+func (f *fakeConfirmEmailUseCase) ConfirmEmail(_ context.Context, rawToken string) error {
+	f.calls++
+	f.token = rawToken
+
+	if f.err != nil {
+		return f.err
+	}
+
+	return nil
+}
+
+func callConfirmEmail(t *testing.T, usecase application.ConfirmEmailUseCase, query string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/confirm-email"+query, nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	handler := NewAuthzHandler(nil, nil, nil, nil, nil, nil, usecase, nil)
+
+	if err := handler.ConfirmEmail(c); err != nil {
+		e.HTTPErrorHandler(err, c)
+	}
+
+	return rec
+}
+
+func TestConfirmEmailAcceptsAValidToken(t *testing.T) {
+	usecase := &fakeConfirmEmailUseCase{}
+
+	rec := callConfirmEmail(t, usecase, "?token=presented-token")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"message":"email confirmed"}`, rec.Body.String())
+
+	require.Equal(t, 1, usecase.calls)
+	assert.Equal(t, "presented-token", usecase.token, "the presented token must reach the use case verbatim")
+	assert.NotContains(t, rec.Body.String(), "presented-token", "the token must never be echoed back")
+}
+
+func TestConfirmEmailRejectsAMissingToken(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{name: "no query string", query: ""},
+		{name: "no token parameter", query: "?other=value"},
+		{name: "empty token parameter", query: "?token="},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			usecase := &fakeConfirmEmailUseCase{}
+
+			rec := callConfirmEmail(t, usecase, test.query)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+			assert.Zero(t, usecase.calls, "a rejected request must never reach the use case")
+		})
+	}
+}
+
+func TestConfirmEmailTokenFailuresAreIndistinguishable(t *testing.T) {
+	failures := []error{
+		domain.ErrEmailConfirmationTokenInvalid,
+		domain.ErrEmailConfirmationTokenExpired,
+		domain.ErrEmailConfirmationTokenUsed,
+	}
+
+	type response struct {
+		code int
+		body string
+	}
+
+	responses := make(map[string]response, len(failures))
+
+	for _, failure := range failures {
+		t.Run(failure.Error(), func(t *testing.T) {
+			usecase := &fakeConfirmEmailUseCase{err: fmt.Errorf("email confirmation token: %w", failure)}
+
+			rec := callConfirmEmail(t, usecase, "?token=presented-token")
+
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+			assert.JSONEq(t, `{"message":"invalid or expired confirmation token"}`, rec.Body.String())
+			assert.NotContains(t, rec.Body.String(), failure.Error(),
+				"the specific verdict must not reach the client")
+
+			responses[failure.Error()] = response{code: rec.Code, body: rec.Body.String()}
+		})
+	}
+
+	require.Len(t, responses, len(failures))
+
+	baseline := responses[domain.ErrEmailConfirmationTokenInvalid.Error()]
+	assert.Equal(t, http.StatusUnauthorized, baseline.code)
+
+	for name, got := range responses {
+		assert.Equal(t, baseline, got, "%s must be byte-identical to the plain invalid-token response", name)
+	}
+}
+
+func TestConfirmEmailMapsInfrastructureFailuresTo500(t *testing.T) {
+	usecase := &fakeConfirmEmailUseCase{err: errors.New("pgx: connection refused")}
+
+	rec := callConfirmEmail(t, usecase, "?token=presented-token")
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "pgx", "infrastructure detail must not reach the client")
+}
+
+type fakeResendConfirmationUseCase struct {
+	err error
+
+	calls int
+	email string
+}
+
+func (f *fakeResendConfirmationUseCase) ResendConfirmation(_ context.Context, email string) error {
+	f.calls++
+	f.email = email
+
+	if f.err != nil {
+		return f.err
+	}
+
+	return nil
+}
+
+func callResendConfirmation(
+	t *testing.T, usecase application.ResendConfirmationUseCase, body string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/resend-confirmation", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	handler := NewAuthzHandler(nil, nil, nil, nil, nil, nil, nil, usecase)
+
+	if err := handler.ResendConfirmation(c); err != nil {
+		e.HTTPErrorHandler(err, c)
+	}
+
+	return rec
+}
+
+func TestResendConfirmationIsIndistinguishableAcrossAddresses(t *testing.T) {
+	addresses := []struct {
+		name  string
+		email string
+	}{
+		{name: "registered address", email: "wile@example.com"},
+		{name: "unregistered address", email: "nobody-here@example.com"},
+	}
+
+	type response struct {
+		code        int
+		body        string
+		contentType string
+	}
+
+	responses := make(map[string]response, len(addresses))
+
+	for _, address := range addresses {
+		t.Run(address.name, func(t *testing.T) {
+			usecase := &fakeResendConfirmationUseCase{}
+
+			rec := callResendConfirmation(t, usecase, `{"email":"`+address.email+`"}`)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			assert.JSONEq(t,
+				`{"message":"if an account exists for this email, a confirmation link has been sent"}`,
+				rec.Body.String())
+
+			require.Equal(t, 1, usecase.calls)
+			assert.Equal(t, address.email, usecase.email, "the address must reach the use case verbatim")
+			assert.NotContains(t, rec.Body.String(), address.email,
+				"echoing the address back would confirm what the caller submitted was even read")
+
+			responses[address.name] = response{
+				code:        rec.Code,
+				body:        rec.Body.String(),
+				contentType: rec.Header().Get(echo.HeaderContentType),
+			}
+		})
+	}
+
+	require.Len(t, responses, len(addresses))
+
+	baseline := responses["registered address"]
+
+	for name, got := range responses {
+		assert.Equal(t, baseline, got,
+			"%s must be byte-identical to the registered-address response, or the endpoint enumerates accounts", name)
+	}
+}
+
+func TestResendConfirmationRejectsMalformedRequests(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		code int
+	}{
+		{name: "unparseable body", body: `{"email":`, code: http.StatusBadRequest},
+		{name: "missing email", body: `{}`, code: http.StatusUnprocessableEntity},
+		{name: "empty email", body: `{"email":""}`, code: http.StatusUnprocessableEntity},
+		{name: "malformed email", body: `{"email":"not-an-address"}`, code: http.StatusUnprocessableEntity},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			usecase := &fakeResendConfirmationUseCase{}
+
+			rec := callResendConfirmation(t, usecase, test.body)
+
+			assert.Equal(t, test.code, rec.Code)
+			assert.Zero(t, usecase.calls, "a rejected request must never reach the use case")
+		})
+	}
+}
+
+func TestResendConfirmationMapsInfrastructureFailuresTo500(t *testing.T) {
+	usecase := &fakeResendConfirmationUseCase{err: errors.New("pgx: connection refused")}
+
+	rec := callResendConfirmation(t, usecase, `{"email":"wile@example.com"}`)
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.NotContains(t, rec.Body.String(), "pgx", "infrastructure detail must not reach the client")
