@@ -101,7 +101,6 @@ func TestRequireAuthAcceptsValidToken(t *testing.T) {
 }
 
 func TestRequireAuthAcceptsLowercaseScheme(t *testing.T) {
-	// RFC 6750 makes the auth scheme case-insensitive; clients do send "bearer".
 	call := serveWithAuth(t, "bearer "+validToken(t))
 
 	assert.True(t, call.status)

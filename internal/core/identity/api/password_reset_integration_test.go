@@ -277,11 +277,6 @@ func (env *resetEnv) createResetTestUser(t *testing.T) *domain.User {
 	}
 	require.NoError(t, env.users.Create(ctx, user))
 
-	// Signup never creates a user without an organization, and signin now
-	// refuses to mint a token for one, so the fixture has to seed the same
-	// shape: an organization plus the owner membership.
-	// The organizations table CHECK-constrains subscription_status, so the
-	// fixture seeds an explicit trial rather than letting the zero value through.
 	now := time.Now().UTC()
 	org := &orgdomain.Organization{
 		Name:               "Acme " + suffix,
