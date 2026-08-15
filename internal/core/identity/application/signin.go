@@ -5,10 +5,10 @@ import (
 	"errors"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/michelsazevedo/tuenti/internal/core/identity/domain"
+	orgdomain "github.com/michelsazevedo/tuenti/internal/core/organization/domain"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/config"
 )
 
@@ -29,12 +29,25 @@ type SigninUseCase interface {
 
 type signin struct {
 	users        domain.UserRepository
+	memberships  orgdomain.MembershipRepository
 	refreshStore domain.RefreshTokenStore
 	secret       string
+	environment  string
 }
 
-func NewSignin(users domain.UserRepository, refreshStore domain.RefreshTokenStore, conf *config.Config) SigninUseCase {
-	return &signin{users: users, refreshStore: refreshStore, secret: conf.Settings.Secret}
+func NewSignin(
+	users domain.UserRepository,
+	memberships orgdomain.MembershipRepository,
+	refreshStore domain.RefreshTokenStore,
+	conf *config.Config,
+) SigninUseCase {
+	return &signin{
+		users:        users,
+		memberships:  memberships,
+		refreshStore: refreshStore,
+		secret:       conf.Settings.Secret,
+		environment:  conf.Settings.Environment,
+	}
 }
 
 func (s *signin) SignIn(ctx context.Context, email, password string) (*TokenPair, error) {
@@ -51,8 +64,12 @@ func (s *signin) SignIn(ctx context.Context, email, password string) (*TokenPair
 		return nil, domain.ErrInvalidCredentials
 	}
 
-	accessToken, err := s.newAccessToken(user.Id.String())
+	accessToken, err := issueAccessToken(ctx, s.memberships, s.secret, s.environment, user.Id)
 	if err != nil {
+		if errors.Is(err, orgdomain.ErrMembershipNotFound) {
+			return nil, domain.ErrInvalidCredentials
+		}
+
 		return nil, err
 	}
 
@@ -66,14 +83,4 @@ func (s *signin) SignIn(ctx context.Context, email, password string) (*TokenPair
 		RefreshToken: refreshToken,
 		ExpiresIn:    int64(accessTokenTTL.Seconds()),
 	}, nil
-}
-
-func (s *signin) newAccessToken(subject string) (string, error) {
-	claims := jwt.RegisteredClaims{
-		Subject:   subject,
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(accessTokenTTL)),
-		IssuedAt:  jwt.NewNumericDate(time.Now()),
-	}
-
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.secret))
 }

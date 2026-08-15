@@ -68,3 +68,11 @@ type ConfirmPasswordResetRequest struct {
 func (r *ConfirmPasswordResetRequest) Validate() error {
 	return validate.Struct(r)
 }
+
+type ResendConfirmationRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+func (r *ResendConfirmationRequest) Validate() error {
+	return validate.Struct(r)
+}

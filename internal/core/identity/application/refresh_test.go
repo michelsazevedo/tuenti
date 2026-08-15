@@ -6,15 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/michelsazevedo/tuenti/internal/core/identity/domain"
+	orgdomain "github.com/michelsazevedo/tuenti/internal/core/organization/domain"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/config"
 )
-
-const testSecret = "s3cr3t-signing-key"
 
 var errStoreUnavailable = errors.New("redis: connection refused")
 
@@ -56,32 +54,20 @@ func (f *fakeRefreshTokenStore) Rotate(_ context.Context, rawToken string, ttl t
 	return f.rotatedToken, f.rotatedUserID, nil
 }
 
-func newTestRefresh(store domain.RefreshTokenStore) RefreshUseCase {
-	return NewRefresh(store, &config.Config{Settings: config.Settings{Secret: testSecret}})
-}
-
-func parseAccessToken(t *testing.T, accessToken string) *jwt.RegisteredClaims {
-	t.Helper()
-
-	claims := &jwt.RegisteredClaims{}
-
-	parsed, err := jwt.ParseWithClaims(accessToken, claims, func(*jwt.Token) (any, error) {
-		return []byte(testSecret), nil
-	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
-
-	require.NoError(t, err)
-	require.True(t, parsed.Valid)
-
-	return claims
+func newTestRefresh(store domain.RefreshTokenStore, memberships orgdomain.MembershipRepository) RefreshUseCase {
+	return NewRefresh(store, memberships, &config.Config{
+		Settings: config.Settings{Secret: testSecret, Environment: testEnvironment},
+	})
 }
 
 func TestRefreshSuccess(t *testing.T) {
 	store := &fakeRefreshTokenStore{
 		rotatedToken:  "the-replacement-raw-token",
-		rotatedUserID: "6f1c9a2e-1f4b-4d3a-9c11-2b8a7d5e0f33",
+		rotatedUserID: testUserID,
 	}
+	memberships := newFakeMemberships()
 
-	pair, err := newTestRefresh(store).Refresh(context.Background(), "the-presented-raw-token")
+	pair, err := newTestRefresh(store, memberships).Refresh(context.Background(), "the-presented-raw-token")
 
 	require.NoError(t, err)
 	require.NotNil(t, pair)
@@ -91,9 +77,15 @@ func TestRefreshSuccess(t *testing.T) {
 	assert.NotEmpty(t, pair.AccessToken)
 
 	claims := parseAccessToken(t, pair.AccessToken)
-	assert.Equal(t, "6f1c9a2e-1f4b-4d3a-9c11-2b8a7d5e0f33", claims.Subject)
+	assert.Equal(t, testUserID, claims.Subject)
+	assert.Equal(t, testOrganizationID, claims.OrganizationID,
+		"the refreshed token must carry the organization the user belongs to")
 	assert.WithinDuration(t, time.Now().Add(accessTokenTTL), claims.ExpiresAt.Time, time.Minute)
 	assert.NotNil(t, claims.IssuedAt)
+
+	assert.Equal(t, 1, memberships.findCalls)
+	assert.Equal(t, mustUUID(testUserID), memberships.lookedUpUser,
+		"the subject returned by Rotate must be parsed into the uuid used for the lookup")
 
 	assert.Equal(t, 1, store.rotateCalls)
 	assert.Equal(t, "the-presented-raw-token", store.presentedToRotate)
@@ -117,12 +109,28 @@ func TestRefreshPropagatesRotateErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &fakeRefreshTokenStore{rotateErr: tt.wantErr}
+			memberships := newFakeMemberships()
 
-			pair, err := newTestRefresh(store).Refresh(context.Background(), "the-presented-raw-token")
+			pair, err := newTestRefresh(store, memberships).Refresh(context.Background(), "the-presented-raw-token")
 
 			assert.Nil(t, pair, "no token pair may be returned when rotation fails")
 			assert.ErrorIs(t, err, tt.wantErr)
 			assert.Equal(t, 1, store.rotateCalls, "the token must be presented to Rotate, not pre-screened")
+			assert.Zero(t, memberships.findCalls, "a rejected rotation must not reach the database")
 		})
 	}
+}
+
+func TestRefreshRejectsNonUUIDSubject(t *testing.T) {
+	store := &fakeRefreshTokenStore{
+		rotatedToken:  "the-replacement-raw-token",
+		rotatedUserID: "not-a-uuid",
+	}
+	memberships := newFakeMemberships()
+
+	pair, err := newTestRefresh(store, memberships).Refresh(context.Background(), "the-presented-raw-token")
+
+	assert.Nil(t, pair, "a subject that cannot address a user must not yield a token")
+	require.Error(t, err)
+	assert.Zero(t, memberships.findCalls)
 }

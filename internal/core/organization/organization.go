@@ -21,6 +21,8 @@ func Organization() fx.Option {
 				return repository.NewMembershipRepository(pg.Pool())
 			},
 			application.NewGetOrganizationByID,
+			application.NewMembershipAuthorizationService,
+			application.NewSuspendExpiredTrials,
 			fx.Annotate(api.NewOrganizationHandler, fx.As(new(api.OrganizationHandler))),
 		),
 	)

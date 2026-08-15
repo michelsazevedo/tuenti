@@ -17,6 +17,8 @@ type AuthzHandler interface {
 	Refresh(c echo.Context) error
 	RequestPasswordReset(c echo.Context) error
 	ConfirmPasswordReset(c echo.Context) error
+	ConfirmEmail(c echo.Context) error
+	ResendConfirmation(c echo.Context) error
 }
 
 type authzHandler struct {
@@ -26,6 +28,8 @@ type authzHandler struct {
 	refresh              application.RefreshUseCase
 	requestPasswordReset application.RequestPasswordResetUseCase
 	confirmPasswordReset application.ConfirmPasswordResetUseCase
+	confirmEmail         application.ConfirmEmailUseCase
+	resendConfirmation   application.ResendConfirmationUseCase
 }
 
 func NewAuthzHandler(
@@ -35,6 +39,8 @@ func NewAuthzHandler(
 	refresh application.RefreshUseCase,
 	requestPasswordReset application.RequestPasswordResetUseCase,
 	confirmPasswordReset application.ConfirmPasswordResetUseCase,
+	confirmEmail application.ConfirmEmailUseCase,
+	resendConfirmation application.ResendConfirmationUseCase,
 ) AuthzHandler {
 	return &authzHandler{
 		signup:               signup,
@@ -43,6 +49,8 @@ func NewAuthzHandler(
 		refresh:              refresh,
 		requestPasswordReset: requestPasswordReset,
 		confirmPasswordReset: confirmPasswordReset,
+		confirmEmail:         confirmEmail,
+		resendConfirmation:   resendConfirmation,
 	}
 }
 
@@ -174,6 +182,42 @@ func (h *authzHandler) ConfirmPasswordReset(c echo.Context) error {
 	return c.JSON(http.StatusOK, MessageResponse{Message: msgPasswordResetCompleted})
 }
 
+func (h *authzHandler) ConfirmEmail(c echo.Context) error {
+	token := c.QueryParam("token")
+
+	if token == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "missing token")
+	}
+
+	if err := h.confirmEmail.ConfirmEmail(c.Request().Context(), token); err != nil {
+		if isEmailConfirmationTokenFailure(err) {
+			return echo.NewHTTPError(http.StatusUnauthorized, msgInvalidEmailConfirmationToken)
+		}
+
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	return c.JSON(http.StatusOK, MessageResponse{Message: msgEmailConfirmed})
+}
+
+func (h *authzHandler) ResendConfirmation(c echo.Context) error {
+	req := new(ResendConfirmationRequest)
+
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	if err := req.Validate(); err != nil {
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, err.Error())
+	}
+
+	if err := h.resendConfirmation.ResendConfirmation(c.Request().Context(), req.Email); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	return c.JSON(http.StatusOK, MessageResponse{Message: msgConfirmationResent})
+}
+
 const msgInvalidRefreshToken = "invalid refresh token"
 
 const (
@@ -181,6 +225,13 @@ const (
 	msgPasswordResetCompleted = "password has been reset"
 
 	msgInvalidPasswordResetToken = "invalid or expired reset token"
+)
+
+const (
+	msgEmailConfirmed     = "email confirmed"
+	msgConfirmationResent = "if an account exists for this email, a confirmation link has been sent"
+
+	msgInvalidEmailConfirmationToken = "invalid or expired confirmation token"
 )
 
 var refreshTokenFailures = []error{
@@ -208,6 +259,22 @@ var passwordResetTokenFailures = []error{
 
 func isPasswordResetTokenFailure(err error) bool {
 	for _, tokenErr := range passwordResetTokenFailures {
+		if errors.Is(err, tokenErr) {
+			return true
+		}
+	}
+
+	return false
+}
+
+var emailConfirmationTokenFailures = []error{
+	domain.ErrEmailConfirmationTokenInvalid,
+	domain.ErrEmailConfirmationTokenExpired,
+	domain.ErrEmailConfirmationTokenUsed,
+}
+
+func isEmailConfirmationTokenFailure(err error) bool {
+	for _, tokenErr := range emailConfirmationTokenFailures {
 		if errors.Is(err, tokenErr) {
 			return true
 		}

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -18,7 +19,10 @@ import (
 	"github.com/michelsazevedo/tuenti/internal/core/organization/domain"
 )
 
-const organizationId = "0f8fad5b-d9cb-469f-a165-708677289501"
+const (
+	organizationId = "0f8fad5b-d9cb-469f-a165-708677289501"
+	planId         = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+)
 
 type fakeGetOrganizationByIDUseCase struct {
 	org *domain.Organization
@@ -75,6 +79,10 @@ func TestGetOrganizationByIDReturnsTheOrganization(t *testing.T) {
 			Name:      "Tuenti",
 			CreatedAt: time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC),
 			UpdatedAt: time.Date(2026, time.March, 9, 10, 11, 12, 0, time.UTC),
+
+			TrialStartsAt:      time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC),
+			TrialEndsAt:        time.Date(2026, time.January, 16, 3, 4, 5, 0, time.UTC),
+			SubscriptionStatus: domain.Trialing,
 		},
 	}
 
@@ -84,12 +92,85 @@ func TestGetOrganizationByIDReturnsTheOrganization(t *testing.T) {
 	assert.JSONEq(t, `{
 		"id": "0f8fad5b-d9cb-469f-a165-708677289501",
 		"name": "Tuenti",
-		"created_at": "2026-01-02T03:04:05Z"
+		"created_at": "2026-01-02T03:04:05Z",
+		"trial_starts_at": "2026-01-02T03:04:05Z",
+		"trial_ends_at": "2026-01-16T03:04:05Z",
+		"subscription_status": "trialing",
+		"plan_id": null
 	}`, rec.Body.String())
 	assert.NotContains(t, rec.Body.String(), "updated_at", "the response must expose only the OrganizationResponse fields")
 
 	assert.Equal(t, 1, usecase.calls)
 	assert.Equal(t, mustUUID(t, organizationId), usecase.requested, "the path id must reach the use case verbatim")
+}
+
+func TestGetOrganizationByIDRendersAnUnsetPlanAsExplicitNull(t *testing.T) {
+	usecase := &fakeGetOrganizationByIDUseCase{
+		org: &domain.Organization{
+			Id:                 mustUUID(t, organizationId),
+			Name:               "Tuenti",
+			SubscriptionStatus: domain.Trialing,
+		},
+	}
+
+	rec := callGetByID(t, usecase, organizationId)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+
+	require.Contains(t, body, "plan_id", "plan_id must always be present, even with no plan assigned")
+	assert.Nil(t, body["plan_id"])
+	assert.NotContains(t, rec.Body.String(), "00000000-0000-0000-0000-000000000000", "an unset plan must not leak as the nil uuid")
+}
+
+func TestGetOrganizationByIDExposesEverySubscriptionStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		status domain.SubscriptionStatus
+		want   string
+	}{
+		{name: "trialing", status: domain.Trialing, want: "trialing"},
+		{name: "active", status: domain.Active, want: "active"},
+		{name: "past due", status: domain.PastDue, want: "past_due"},
+		{name: "suspended", status: domain.Suspended, want: "suspended"},
+		{name: "canceled", status: domain.Canceled, want: "canceled"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			usecase := &fakeGetOrganizationByIDUseCase{
+				org: &domain.Organization{
+					Id:                 mustUUID(t, organizationId),
+					Name:               "Tuenti",
+					CreatedAt:          time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC),
+					TrialStartsAt:      time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC),
+					TrialEndsAt:        time.Date(2026, time.January, 16, 3, 4, 5, 0, time.UTC),
+					SubscriptionStatus: test.status,
+					PlanID:             mustUUID(t, planId),
+				},
+			}
+
+			rec := callGetByID(t, usecase, organizationId)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+
+			var body struct {
+				TrialStartsAt      time.Time `json:"trial_starts_at"`
+				TrialEndsAt        time.Time `json:"trial_ends_at"`
+				SubscriptionStatus string    `json:"subscription_status"`
+				PlanID             *string   `json:"plan_id"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+
+			assert.Equal(t, test.want, body.SubscriptionStatus)
+			assert.Equal(t, time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC), body.TrialStartsAt)
+			assert.Equal(t, time.Date(2026, time.January, 16, 3, 4, 5, 0, time.UTC), body.TrialEndsAt)
+			require.NotNil(t, body.PlanID)
+			assert.Equal(t, planId, *body.PlanID)
+		})
+	}
 }
 
 func TestGetOrganizationByIDRejectsMalformedIds(t *testing.T) {

@@ -34,6 +34,14 @@ func (r *findSpyOrganizationRepository) FindByID(ctx context.Context, id pgtype.
 	return r.organization, nil
 }
 
+func (r *findSpyOrganizationRepository) FindExpiredTrials(ctx context.Context, now time.Time, limit int) ([]*domain.Organization, error) {
+	return nil, errors.New("unexpected call to FindExpiredTrials")
+}
+
+func (r *findSpyOrganizationRepository) UpdateSubscriptionStatus(ctx context.Context, id pgtype.UUID, status domain.SubscriptionStatus) error {
+	return errors.New("unexpected call to UpdateSubscriptionStatus")
+}
+
 func TestGetOrganizationByID(t *testing.T) {
 	id := pgtype.UUID{Bytes: [16]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10}, Valid: true}
 	organization := &domain.Organization{

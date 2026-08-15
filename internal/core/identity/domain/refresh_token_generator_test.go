@@ -96,8 +96,6 @@ func TestHashRefreshToken(t *testing.T) {
 	t.Run("matches the SHA-256 reference vector", func(t *testing.T) {
 		t.Parallel()
 
-		// SHA-256("abc"), the FIPS 180-4 test vector — guards against a silent
-		// change of hash algorithm or encoding.
 		assert.Equal(
 			t,
 			"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",

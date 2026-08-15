@@ -26,6 +26,7 @@ import (
 	"github.com/michelsazevedo/tuenti/internal/core/identity/persistence"
 	orgapi "github.com/michelsazevedo/tuenti/internal/core/organization/api"
 	orgapp "github.com/michelsazevedo/tuenti/internal/core/organization/application"
+	orgdomain "github.com/michelsazevedo/tuenti/internal/core/organization/domain"
 	orgrepo "github.com/michelsazevedo/tuenti/internal/core/organization/repository"
 	apphttp "github.com/michelsazevedo/tuenti/internal/http"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/config"
@@ -136,15 +137,18 @@ func newResetEnv(t *testing.T) *resetEnv {
 	users := persistence.NewUserRepository(pool)
 	tokens := persistence.NewPasswordResetTokenRepository(pool)
 	refreshStore := persistence.NewRefreshTokenStore(client)
+	memberships := orgrepo.NewMembershipRepository(pool)
 	mailer := &captureMailer{}
 
 	authz := api.NewAuthzHandler(
 		nil,
-		application.NewSignin(users, refreshStore, conf),
+		application.NewSignin(users, memberships, refreshStore, conf),
 		nil,
-		application.NewRefresh(refreshStore, conf),
+		application.NewRefresh(refreshStore, memberships, conf),
 		application.NewRequestPasswordReset(users, tokens, mailer, conf),
 		application.NewConfirmPasswordReset(database.NewUnitOfWork(pgConn), tokens, refreshStore),
+		nil,
+		nil,
 	)
 
 	server := echo.New()
@@ -179,6 +183,7 @@ func testConfig(t *testing.T) *config.Config {
 	setDefaultEnv(t, "RESEND_API_KEY", "re_test_key")
 	setDefaultEnv(t, "RESEND_FROM_EMAIL", "no-reply@example.com")
 	setDefaultEnv(t, "PASSWORD_RESET_BASE_URL", "http://localhost:3000/reset-password")
+	setDefaultEnv(t, "EMAIL_CONFIRMATION_BASE_URL", "http://localhost:3000/confirm-email")
 
 	conf, err := config.NewConfig()
 	require.NoError(t, err, "invalid test configuration")
@@ -272,6 +277,21 @@ func (env *resetEnv) createResetTestUser(t *testing.T) *domain.User {
 	}
 	require.NoError(t, env.users.Create(ctx, user))
 
+	now := time.Now().UTC()
+	org := &orgdomain.Organization{
+		Name:               "Acme " + suffix,
+		TrialStartsAt:      now,
+		TrialEndsAt:        now.Add(14 * 24 * time.Hour),
+		SubscriptionStatus: orgdomain.Trialing,
+	}
+	require.NoError(t, orgrepo.NewOrganizationRepository(env.pool).Create(ctx, org))
+
+	require.NoError(t, orgrepo.NewMembershipRepository(env.pool).Create(ctx, &orgdomain.Membership{
+		OrganizationId: org.Id,
+		UserId:         user.Id,
+		Role:           orgdomain.RoleManager,
+	}))
+
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), resetTestTimeout)
 		defer cancel()
@@ -281,8 +301,16 @@ func (env *resetEnv) createResetTestUser(t *testing.T) *domain.User {
 			t.Errorf("cleanup failed for the password reset tokens of user %v: %v", user.Id, err)
 		}
 
+		if _, err := env.pool.Exec(cleanupCtx, `DELETE FROM memberships WHERE user_id = $1`, user.Id); err != nil {
+			t.Errorf("cleanup failed for the membership of user %v: %v", user.Id, err)
+		}
+
 		if _, err := env.pool.Exec(cleanupCtx, `DELETE FROM users WHERE id = $1`, user.Id); err != nil {
 			t.Errorf("cleanup failed for user %v: %v", user.Id, err)
+		}
+
+		if _, err := env.pool.Exec(cleanupCtx, `DELETE FROM organizations WHERE id = $1`, org.Id); err != nil {
+			t.Errorf("cleanup failed for organization %v: %v", org.Id, err)
 		}
 	})
 

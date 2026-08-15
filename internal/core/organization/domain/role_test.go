@@ -12,12 +12,12 @@ func TestRoleValid(t *testing.T) {
 		role Role
 		want bool
 	}{
-		{name: "owner", role: RoleOwner, want: true},
+		{name: "manager", role: RoleManager, want: true},
 		{name: "admin", role: RoleAdmin, want: true},
 		{name: "member", role: RoleMember, want: true},
 		{name: "unknown role", role: Role("superadmin"), want: false},
 		{name: "empty role", role: Role(""), want: false},
-		{name: "wrong case", role: Role("Owner"), want: false},
+		{name: "wrong case", role: Role("Manager"), want: false},
 	}
 
 	for _, tt := range tests {

@@ -2,11 +2,12 @@ package application
 
 import (
 	"context"
-	"time"
+	"fmt"
 
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/michelsazevedo/tuenti/internal/core/identity/domain"
+	orgdomain "github.com/michelsazevedo/tuenti/internal/core/organization/domain"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/config"
 )
 
@@ -16,11 +17,22 @@ type RefreshUseCase interface {
 
 type refresh struct {
 	refreshStore domain.RefreshTokenStore
+	memberships  orgdomain.MembershipRepository
 	secret       string
+	environment  string
 }
 
-func NewRefresh(refreshStore domain.RefreshTokenStore, conf *config.Config) RefreshUseCase {
-	return &refresh{refreshStore: refreshStore, secret: conf.Settings.Secret}
+func NewRefresh(
+	refreshStore domain.RefreshTokenStore,
+	memberships orgdomain.MembershipRepository,
+	conf *config.Config,
+) RefreshUseCase {
+	return &refresh{
+		refreshStore: refreshStore,
+		memberships:  memberships,
+		secret:       conf.Settings.Secret,
+		environment:  conf.Settings.Environment,
+	}
 }
 
 func (s *refresh) Refresh(ctx context.Context, refreshToken string) (*TokenPair, error) {
@@ -29,7 +41,12 @@ func (s *refresh) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 		return nil, err
 	}
 
-	accessToken, err := s.newAccessToken(userID)
+	var id pgtype.UUID
+	if err := id.Scan(userID); err != nil {
+		return nil, fmt.Errorf("refresh: stored subject %q is not a uuid: %w", userID, err)
+	}
+
+	accessToken, err := issueAccessToken(ctx, s.memberships, s.secret, s.environment, id)
 	if err != nil {
 		return nil, err
 	}
@@ -39,14 +56,4 @@ func (s *refresh) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 		RefreshToken: rotatedToken,
 		ExpiresIn:    int64(accessTokenTTL.Seconds()),
 	}, nil
-}
-
-func (s *refresh) newAccessToken(subject string) (string, error) {
-	claims := jwt.RegisteredClaims{
-		Subject:   subject,
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(accessTokenTTL)),
-		IssuedAt:  jwt.NewNumericDate(time.Now()),
-	}
-
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.secret))
 }

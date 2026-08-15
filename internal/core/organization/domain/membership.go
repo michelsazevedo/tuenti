@@ -10,7 +10,7 @@ type Membership struct {
 	Id             pgtype.UUID `json:"id"`
 	OrganizationId pgtype.UUID `json:"organization_id"`
 	UserId         pgtype.UUID `json:"user_id"`
-	Role           Role        `json:"role" validate:"required,oneof=owner admin member"`
+	Role           Role        `json:"role" validate:"required,oneof=manager admin member"`
 	CreatedAt      time.Time   `json:"created_at"`
 	UpdatedAt      time.Time   `json:"updated_at"`
 }

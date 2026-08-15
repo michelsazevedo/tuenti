@@ -15,10 +15,6 @@ import (
 
 const passwordResetTokenTTL = 30 * time.Minute
 
-// createResetTestUser reuses the package's user fixture and adds the cleanup of
-// whatever tokens the test hangs off it. Cleanups run LIFO, so registering this
-// after createTestUser guarantees the children are gone before the parent row
-// the foreign key points at.
 func createResetTestUser(t *testing.T, pool *pgxpool.Pool) *domain.User {
 	t.Helper()
 
@@ -36,9 +32,6 @@ func createResetTestUser(t *testing.T, pool *pgxpool.Pool) *domain.User {
 	return user
 }
 
-// seedPasswordResetToken mints a real token and stores only its digest, exactly
-// as the reset flow does. It returns the raw token so callers can assert it
-// never reaches the database.
 func seedPasswordResetToken(
 	t *testing.T, pool *pgxpool.Pool, userID pgtype.UUID, expiresAt time.Time,
 ) (string, *domain.PasswordResetToken) {
@@ -57,8 +50,6 @@ func seedPasswordResetToken(
 	return rawToken, token
 }
 
-// usedAtOf reads used_at straight from the row, bypassing the repository, so an
-// assertion about what was persisted cannot be satisfied by in-memory state.
 func usedAtOf(t *testing.T, pool *pgxpool.Pool, id pgtype.UUID) *time.Time {
 	t.Helper()
 
@@ -142,8 +133,6 @@ func TestPasswordResetTokenRepositoryMarkUsed(t *testing.T) {
 		"a burned token must no longer validate")
 
 	t.Run("marking it again is a no-op", func(t *testing.T) {
-		// The second call must land on a measurably later clock, so a missing
-		// `used_at IS NULL` guard would show up as a moved timestamp.
 		time.Sleep(50 * time.Millisecond)
 
 		require.NoError(t, repository.MarkUsed(ctx, created.Id), "a retry must not error")
@@ -187,7 +176,6 @@ func TestPasswordResetTokenRepositoryInvalidateActiveForUser(t *testing.T) {
 	burnedAt := usedAtOf(t, pool, alreadyUsed.Id)
 	require.NotNil(t, burnedAt)
 
-	// Any restamping must be visible against the instant already recorded.
 	time.Sleep(50 * time.Millisecond)
 
 	require.NoError(t, repository.InvalidateActiveForUser(ctx, target.Id))

@@ -24,12 +24,17 @@ func Identity() fx.Option {
 			func(pg *database.PgConn) domain.PasswordResetTokenRepository {
 				return persistence.NewPasswordResetTokenRepository(pg.Pool())
 			},
+			func(pg *database.PgConn) domain.EmailConfirmationTokenRepository {
+				return persistence.NewEmailConfirmationTokenRepository(pg.Pool())
+			},
 			application.NewSignup,
 			application.NewSignin,
 			application.NewRefresh,
 			application.NewLogout,
 			application.NewRequestPasswordReset,
 			application.NewConfirmPasswordReset,
+			application.NewConfirmEmail,
+			application.NewResendConfirmation,
 			fx.Annotate(api.NewAuthzHandler, fx.As(new(api.AuthzHandler))),
 		),
 	)
