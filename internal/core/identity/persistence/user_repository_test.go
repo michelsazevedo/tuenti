@@ -37,6 +37,7 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 	setDefaultEnv(t, "RESEND_FROM_EMAIL", "no-reply@example.com")
 	setDefaultEnv(t, "PASSWORD_RESET_BASE_URL", "http://localhost:8080/password/reset")
 	setDefaultEnv(t, "EMAIL_CONFIRMATION_BASE_URL", "http://localhost:8080/confirm-email")
+	setDefaultEnv(t, "INVITATION_BASE_URL", "http://localhost:8080/invitations")
 
 	conf, err := config.NewConfig()
 	require.NoError(t, err, "invalid test configuration")

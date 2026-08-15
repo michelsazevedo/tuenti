@@ -19,3 +19,13 @@ type MembershipRepository interface {
 	FindByUserID(ctx context.Context, userID pgtype.UUID) (*Membership, error)
 	FindByUserAndOrganization(ctx context.Context, userID, organizationID pgtype.UUID) (*Membership, error)
 }
+
+type InvitationRepository interface {
+	Create(ctx context.Context, invitation *Invitation) error
+	FindByID(ctx context.Context, id pgtype.UUID) (*Invitation, error)
+	FindByTokenDigest(ctx context.Context, tokenDigest string) (*Invitation, error)
+	FindPendingByEmailAndOrganization(ctx context.Context, email string, organizationID pgtype.UUID) (*Invitation, error)
+	FindByOrganization(ctx context.Context, organizationID pgtype.UUID) ([]*Invitation, error)
+	MarkAccepted(ctx context.Context, id pgtype.UUID, acceptedAt time.Time) error
+	MarkRevoked(ctx context.Context, id pgtype.UUID, revokedAt time.Time) error
+}

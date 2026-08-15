@@ -17,13 +17,13 @@ import (
 func (env *resetEnv) signin(t *testing.T, email, password string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	return env.post(t, "/signin", `{"email":"`+email+`","password":"`+password+`"}`)
+	return env.post(t, "/auth/signin", `{"email":"`+email+`","password":"`+password+`"}`)
 }
 
 func (env *resetEnv) refresh(t *testing.T, refreshToken string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	return env.post(t, "/refresh", `{"refresh_token":"`+refreshToken+`"}`)
+	return env.post(t, "/auth/refresh", `{"refresh_token":"`+refreshToken+`"}`)
 }
 
 func tokenPair(t *testing.T, rec *httptest.ResponseRecorder) api.TokenResponse {

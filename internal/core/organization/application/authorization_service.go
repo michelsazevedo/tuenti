@@ -61,6 +61,18 @@ func (a *MembershipAuthorization) CanAssignRole(targetRole domain.Role) bool {
 	return a.policy.CanAssignRole(a.membership.Role, targetRole)
 }
 
+func (a *MembershipAuthorization) CanAssignInvitationRole(targetRole domain.Role) bool {
+	return a.policy.CanAssignInvitationRole(a.membership.Role, targetRole)
+}
+
+func (a *MembershipAuthorization) CanCreateInvitation() bool {
+	return a.policy.CanCreateInvitation(a.membership.Role)
+}
+
+func (a *MembershipAuthorization) CanRevokeInvitation(targetRole domain.Role) bool {
+	return a.policy.CanRevokeInvitation(a.membership.Role, targetRole)
+}
+
 func (a *MembershipAuthorization) CanRemoveSelf(isLastManager bool) bool {
 	return a.policy.CanRemoveSelf(a.membership.Role, isLastManager)
 }

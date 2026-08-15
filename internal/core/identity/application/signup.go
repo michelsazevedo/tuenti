@@ -56,11 +56,7 @@ func (s *signup) SignUp(ctx context.Context, user *domain.User, organizationName
 			return err
 		}
 
-		membership := &orgdomain.Membership{
-			OrganizationId: org.Id,
-			UserId:         user.Id,
-			Role:           orgdomain.RoleManager,
-		}
+		membership := &orgdomain.Membership{OrganizationId: org.Id, UserId: user.Id, Role: orgdomain.RoleManager}
 
 		if err := orgrepository.NewMembershipRepository(tx).Create(ctx, membership); err != nil {
 			return err

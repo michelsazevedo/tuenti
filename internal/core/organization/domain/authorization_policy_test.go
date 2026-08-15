@@ -76,6 +76,101 @@ func TestAuthorizationPolicyDeniesUnknownRole(t *testing.T) {
 			assert.False(t, policy.CanAssignRole(RoleManager, role), "CanAssignRole as target")
 			assert.False(t, policy.CanRemoveSelf(role, false), "CanRemoveSelf, not last manager")
 			assert.False(t, policy.CanRemoveSelf(role, true), "CanRemoveSelf, last manager")
+			assert.False(t, policy.CanCreateInvitation(role), "CanCreateInvitation")
+			assert.False(t, policy.CanRevokeInvitation(role, RoleMember), "CanRevokeInvitation as revoker")
+			assert.False(t, policy.CanRevokeInvitation(RoleManager, role), "CanRevokeInvitation as target")
+		})
+	}
+}
+
+func TestAuthorizationPolicyCanCreateInvitation(t *testing.T) {
+	tests := []struct {
+		name string
+		role Role
+		want bool
+	}{
+		{name: "manager may invite", role: RoleManager, want: true},
+		{name: "admin may invite", role: RoleAdmin, want: true},
+		{name: "member may not invite", role: RoleMember, want: false},
+	}
+
+	policy := AuthorizationPolicy{}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, policy.CanCreateInvitation(tt.role))
+		})
+	}
+}
+
+func TestAuthorizationPolicyCanRevokeInvitation(t *testing.T) {
+	tests := []struct {
+		name        string
+		revokerRole Role
+		targetRole  Role
+		want        bool
+	}{
+		{
+			name:        "manager may revoke a manager invitation",
+			revokerRole: RoleManager,
+			targetRole:  RoleManager,
+			want:        true,
+		},
+		{
+			name:        "manager may revoke an admin invitation",
+			revokerRole: RoleManager,
+			targetRole:  RoleAdmin,
+			want:        true,
+		},
+		{
+			name:        "manager may revoke a member invitation",
+			revokerRole: RoleManager,
+			targetRole:  RoleMember,
+			want:        true,
+		},
+		{
+			name:        "admin may not revoke a manager invitation",
+			revokerRole: RoleAdmin,
+			targetRole:  RoleManager,
+			want:        false,
+		},
+		{
+			name:        "admin may revoke an admin invitation",
+			revokerRole: RoleAdmin,
+			targetRole:  RoleAdmin,
+			want:        true,
+		},
+		{
+			name:        "admin may revoke a member invitation",
+			revokerRole: RoleAdmin,
+			targetRole:  RoleMember,
+			want:        true,
+		},
+		{
+			name:        "member may not revoke a manager invitation",
+			revokerRole: RoleMember,
+			targetRole:  RoleManager,
+			want:        false,
+		},
+		{
+			name:        "member may not revoke an admin invitation",
+			revokerRole: RoleMember,
+			targetRole:  RoleAdmin,
+			want:        false,
+		},
+		{
+			name:        "member may not revoke a member invitation",
+			revokerRole: RoleMember,
+			targetRole:  RoleMember,
+			want:        false,
+		},
+	}
+
+	policy := AuthorizationPolicy{}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, policy.CanRevokeInvitation(tt.revokerRole, tt.targetRole))
 		})
 	}
 }
@@ -148,6 +243,36 @@ func TestAuthorizationPolicyCanAssignRole(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, policy.CanAssignRole(tt.assignerRole, tt.targetRole))
+		})
+	}
+}
+
+func TestAuthorizationPolicyCanAssignInvitationRole(t *testing.T) {
+	tests := []struct {
+		name        string
+		inviterRole Role
+		targetRole  Role
+		want        bool
+	}{
+		{name: "manager may invite a manager", inviterRole: RoleManager, targetRole: RoleManager, want: true},
+		{name: "manager may invite an admin", inviterRole: RoleManager, targetRole: RoleAdmin, want: true},
+		{name: "manager may invite a member", inviterRole: RoleManager, targetRole: RoleMember, want: true},
+		{name: "admin may not invite a manager", inviterRole: RoleAdmin, targetRole: RoleManager, want: false},
+		{
+			name:        "admin may invite an admin (unlike CanAssignRole, which forbids admin-to-admin promotion)",
+			inviterRole: RoleAdmin, targetRole: RoleAdmin, want: true,
+		},
+		{name: "admin may invite a member", inviterRole: RoleAdmin, targetRole: RoleMember, want: true},
+		{name: "member may not invite a manager", inviterRole: RoleMember, targetRole: RoleManager, want: false},
+		{name: "member may not invite an admin", inviterRole: RoleMember, targetRole: RoleAdmin, want: false},
+		{name: "member may not invite a member", inviterRole: RoleMember, targetRole: RoleMember, want: false},
+	}
+
+	policy := AuthorizationPolicy{}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, policy.CanAssignInvitationRole(tt.inviterRole, tt.targetRole))
 		})
 	}
 }

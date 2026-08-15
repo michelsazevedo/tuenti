@@ -190,6 +190,80 @@ func TestMembershipAuthorizationCanAssignRole(t *testing.T) {
 	}
 }
 
+func TestMembershipAuthorizationCanAssignInvitationRole(t *testing.T) {
+	policy := domain.AuthorizationPolicy{}
+
+	tests := []struct {
+		name       string
+		role       domain.Role
+		targetRole domain.Role
+		want       bool
+	}{
+		{name: "manager invites manager", role: domain.RoleManager, targetRole: domain.RoleManager, want: true},
+		{name: "admin invites admin", role: domain.RoleAdmin, targetRole: domain.RoleAdmin, want: true},
+		{name: "admin invites manager", role: domain.RoleAdmin, targetRole: domain.RoleManager, want: false},
+		{name: "member invites member", role: domain.RoleMember, targetRole: domain.RoleMember, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			authorization := authorize(t, membershipWithRole(tt.role))
+
+			assert.Equal(t, tt.want, authorization.CanAssignInvitationRole(tt.targetRole))
+			assert.Equal(t, policy.CanAssignInvitationRole(tt.role, tt.targetRole),
+				authorization.CanAssignInvitationRole(tt.targetRole))
+		})
+	}
+}
+
+func TestMembershipAuthorizationCanCreateInvitation(t *testing.T) {
+	policy := domain.AuthorizationPolicy{}
+
+	tests := []struct {
+		name string
+		role domain.Role
+		want bool
+	}{
+		{name: "manager may invite", role: domain.RoleManager, want: true},
+		{name: "admin may invite", role: domain.RoleAdmin, want: true},
+		{name: "member may not invite", role: domain.RoleMember, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			authorization := authorize(t, membershipWithRole(tt.role))
+
+			assert.Equal(t, tt.want, authorization.CanCreateInvitation())
+			assert.Equal(t, policy.CanCreateInvitation(tt.role), authorization.CanCreateInvitation())
+		})
+	}
+}
+
+func TestMembershipAuthorizationCanRevokeInvitation(t *testing.T) {
+	policy := domain.AuthorizationPolicy{}
+
+	tests := []struct {
+		name       string
+		role       domain.Role
+		targetRole domain.Role
+		want       bool
+	}{
+		{name: "manager revokes a manager invitation", role: domain.RoleManager, targetRole: domain.RoleManager, want: true},
+		{name: "admin revokes a manager invitation", role: domain.RoleAdmin, targetRole: domain.RoleManager, want: false},
+		{name: "admin revokes a member invitation", role: domain.RoleAdmin, targetRole: domain.RoleMember, want: true},
+		{name: "member revokes a member invitation", role: domain.RoleMember, targetRole: domain.RoleMember, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			authorization := authorize(t, membershipWithRole(tt.role))
+
+			assert.Equal(t, tt.want, authorization.CanRevokeInvitation(tt.targetRole))
+			assert.Equal(t, policy.CanRevokeInvitation(tt.role, tt.targetRole), authorization.CanRevokeInvitation(tt.targetRole))
+		})
+	}
+}
+
 func TestMembershipAuthorizationCanRemoveSelf(t *testing.T) {
 	policy := domain.AuthorizationPolicy{}
 

@@ -55,6 +55,7 @@ type Settings struct {
 	Server                   Server `yaml:"server"`
 	PasswordResetBaseURL     string `yaml:"password_reset_base_url" validate:"required,url"`
 	EmailConfirmationBaseURL string `yaml:"email_confirmation_base_url" validate:"required,url"`
+	InvitationBaseURL        string `yaml:"invitation_base_url" validate:"required,url"`
 }
 
 // Config ...

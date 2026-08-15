@@ -40,6 +40,7 @@ export RESEND_FROM_EMAIL=
 
 export PASSWORD_RESET_BASE_URL=
 export EMAIL_CONFIRMATION_BASE_URL=
+export INVITATION_BASE_URL=
 
 export ENV_APP=development
 export OTLP_ENDPOINT=
@@ -74,7 +75,7 @@ go run ./cmd/jobs
 
 It must run from the repository root, because pending migrations are applied on boot from `./db/migrations` — the same way the API server does it.
 
-It needs the **same environment variables as the main server** (the full list is under [Running with Make](#running-with-make)). That includes `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `PASSWORD_RESET_BASE_URL`, and `EMAIL_CONFIRMATION_BASE_URL`, even though the job never sends email: configuration is validated as a whole rather than per binary, so it refuses to start when they are missing.
+It needs the **same environment variables as the main server** (the full list is under [Running with Make](#running-with-make)). That includes `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `PASSWORD_RESET_BASE_URL`, `EMAIL_CONFIRMATION_BASE_URL`, and `INVITATION_BASE_URL`, even though the job never sends email: configuration is validated as a whole rather than per binary, so it refuses to start when they are missing.
 
 Exit codes:
 
