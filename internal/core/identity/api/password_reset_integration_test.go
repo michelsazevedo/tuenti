@@ -157,9 +157,12 @@ func newResetEnv(t *testing.T) *resetEnv {
 	apphttp.RegisterRoutes(
 		server,
 		client,
+		conf,
+		memberships,
 		apphttp.NewHealthzHandler(),
 		authz,
 		orgapi.NewOrganizationHandler(orgapp.NewGetOrganizationByID(orgrepo.NewOrganizationRepository(pool))),
+		orgapi.NewInvitationHandler(nil, nil, nil, nil),
 	)
 
 	return &resetEnv{
@@ -184,6 +187,7 @@ func testConfig(t *testing.T) *config.Config {
 	setDefaultEnv(t, "RESEND_FROM_EMAIL", "no-reply@example.com")
 	setDefaultEnv(t, "PASSWORD_RESET_BASE_URL", "http://localhost:3000/reset-password")
 	setDefaultEnv(t, "EMAIL_CONFIRMATION_BASE_URL", "http://localhost:3000/confirm-email")
+	setDefaultEnv(t, "INVITATION_BASE_URL", "http://localhost:3000/invitations")
 
 	conf, err := config.NewConfig()
 	require.NoError(t, err, "invalid test configuration")
@@ -242,13 +246,13 @@ func (env *resetEnv) post(t *testing.T, path, body string) *httptest.ResponseRec
 func (env *resetEnv) requestReset(t *testing.T, email string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	return env.post(t, "/password-reset", `{"email":"`+email+`"}`)
+	return env.post(t, "/auth/password-reset", `{"email":"`+email+`"}`)
 }
 
 func (env *resetEnv) confirmReset(t *testing.T, rawToken, newPassword string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	return env.post(t, "/password-reset/confirm",
+	return env.post(t, "/auth/password-reset/confirm",
 		`{"token":"`+rawToken+`","new_password":"`+newPassword+`"}`)
 }
 
@@ -491,31 +495,31 @@ func TestPasswordResetRejectsMalformedInput(t *testing.T) {
 	}{
 		{
 			name: "request with no email",
-			path: "/password-reset",
+			path: "/auth/password-reset",
 			body: `{}`,
 			code: http.StatusUnprocessableEntity,
 		},
 		{
 			name: "request with a malformed email",
-			path: "/password-reset",
+			path: "/auth/password-reset",
 			body: `{"email":"not-an-address"}`,
 			code: http.StatusUnprocessableEntity,
 		},
 		{
 			name: "request with an unparseable body",
-			path: "/password-reset",
+			path: "/auth/password-reset",
 			body: `{"email":`,
 			code: http.StatusBadRequest,
 		},
 		{
 			name: "confirm with no token",
-			path: "/password-reset/confirm",
+			path: "/auth/password-reset/confirm",
 			body: `{"new_password":"brandnewpassword"}`,
 			code: http.StatusUnprocessableEntity,
 		},
 		{
 			name: "confirm with a password under the minimum length",
-			path: "/password-reset/confirm",
+			path: "/auth/password-reset/confirm",
 			body: `{"token":"whatever","new_password":"short"}`,
 			code: http.StatusUnprocessableEntity,
 		},

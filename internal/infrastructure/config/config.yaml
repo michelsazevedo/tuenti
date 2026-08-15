@@ -12,6 +12,7 @@ settings:
   environment: "${ENV_APP}"
   password_reset_base_url: "${PASSWORD_RESET_BASE_URL}"
   email_confirmation_base_url: "${EMAIL_CONFIRMATION_BASE_URL}"
+  invitation_base_url: "${INVITATION_BASE_URL}"
   server:
     port: ":8080"
 

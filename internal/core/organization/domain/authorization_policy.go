@@ -29,6 +29,28 @@ func (p AuthorizationPolicy) CanAssignRole(assignerRole, targetRole Role) bool {
 	return slices.Contains(roleAssignmentAllowList[assignerRole], targetRole)
 }
 
+func (p AuthorizationPolicy) CanCreateInvitation(role Role) bool {
+	return role == RoleManager || role == RoleAdmin
+}
+
+var invitationRoleAssignmentAllowList = map[Role][]Role{
+	RoleManager: {RoleManager, RoleAdmin, RoleMember},
+	RoleAdmin:   {RoleAdmin, RoleMember},
+}
+
+func (p AuthorizationPolicy) CanAssignInvitationRole(inviterRole, targetRole Role) bool {
+	return slices.Contains(invitationRoleAssignmentAllowList[inviterRole], targetRole)
+}
+
+var invitationRevocationAllowList = map[Role][]Role{
+	RoleManager: {RoleManager, RoleAdmin, RoleMember},
+	RoleAdmin:   {RoleAdmin, RoleMember},
+}
+
+func (p AuthorizationPolicy) CanRevokeInvitation(revokerRole, targetRole Role) bool {
+	return slices.Contains(invitationRevocationAllowList[revokerRole], targetRole)
+}
+
 func (p AuthorizationPolicy) CanRemoveSelf(role Role, isLastManager bool) bool {
 	switch role {
 	case RoleManager:

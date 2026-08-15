@@ -20,10 +20,18 @@ func Organization() fx.Option {
 			func(pg *database.PgConn) domain.MembershipRepository {
 				return repository.NewMembershipRepository(pg.Pool())
 			},
+			func(pg *database.PgConn) domain.InvitationRepository {
+				return repository.NewInvitationRepository(pg.Pool())
+			},
 			application.NewGetOrganizationByID,
 			application.NewMembershipAuthorizationService,
 			application.NewSuspendExpiredTrials,
+			application.NewCreateInvitation,
+			application.NewAcceptInvitation,
+			application.NewRevokeInvitation,
+			application.NewListInvitations,
 			fx.Annotate(api.NewOrganizationHandler, fx.As(new(api.OrganizationHandler))),
+			fx.Annotate(api.NewInvitationHandler, fx.As(new(api.InvitationHandler))),
 		),
 	)
 }

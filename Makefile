@@ -1,5 +1,10 @@
 .PHONY: build run test lint docker-up docker-down
 
+ifneq (,$(wildcard .env))
+include .env
+export
+endif
+
 build:
 	go build -o bin/tuenti ./cmd
 

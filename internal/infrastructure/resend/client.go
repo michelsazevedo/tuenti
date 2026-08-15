@@ -5,6 +5,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/michelsazevedo/tuenti/internal/core/identity/domain"
+	orgdomain "github.com/michelsazevedo/tuenti/internal/core/organization/domain"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/config"
 )
 
@@ -21,6 +22,9 @@ func Resend() fx.Option {
 				return NewMailer(client, conf.Resend.FromEmail)
 			},
 			func(client *resendgo.Client, conf *config.Config) domain.ConfirmationMailer {
+				return NewMailer(client, conf.Resend.FromEmail)
+			},
+			func(client *resendgo.Client, conf *config.Config) orgdomain.InvitationMailer {
 				return NewMailer(client, conf.Resend.FromEmail)
 			},
 		),
