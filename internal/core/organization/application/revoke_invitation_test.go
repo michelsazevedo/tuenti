@@ -31,8 +31,6 @@ func newRevokeInvitationTestPgConn(t *testing.T) *database.PgConn {
 	setRevokeInvitationDefaultEnv(t, "POSTGRES_USER", "tuenti")
 	setRevokeInvitationDefaultEnv(t, "POSTGRES_PASSWORD", "tuentipwd")
 	setRevokeInvitationDefaultEnv(t, "POSTGRES_DB", "tuenti")
-	setRevokeInvitationDefaultEnv(t, "RESEND_API_KEY", "test-key")
-	setRevokeInvitationDefaultEnv(t, "RESEND_FROM_EMAIL", "test@example.com")
 	setRevokeInvitationDefaultEnv(t, "PASSWORD_RESET_BASE_URL", "http://localhost:3000/reset-password")
 	setRevokeInvitationDefaultEnv(t, "EMAIL_CONFIRMATION_BASE_URL", "http://localhost:3000/confirm-email")
 	setRevokeInvitationDefaultEnv(t, "INVITATION_BASE_URL", "http://localhost:3000/invitations")

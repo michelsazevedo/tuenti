@@ -62,8 +62,6 @@ func newAcceptInvitationTestPgConn(t *testing.T) *database.PgConn {
 	setAcceptInvitationDefaultEnv(t, "POSTGRES_USER", "tuenti")
 	setAcceptInvitationDefaultEnv(t, "POSTGRES_PASSWORD", "tuentipwd")
 	setAcceptInvitationDefaultEnv(t, "POSTGRES_DB", "tuenti")
-	setAcceptInvitationDefaultEnv(t, "RESEND_API_KEY", "test-key")
-	setAcceptInvitationDefaultEnv(t, "RESEND_FROM_EMAIL", "test@example.com")
 	setAcceptInvitationDefaultEnv(t, "PASSWORD_RESET_BASE_URL", "http://localhost:3000/reset-password")
 	setAcceptInvitationDefaultEnv(t, "EMAIL_CONFIRMATION_BASE_URL", "http://localhost:3000/confirm-email")
 	setAcceptInvitationDefaultEnv(t, "INVITATION_BASE_URL", "http://localhost:3000/invitations")

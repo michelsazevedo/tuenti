@@ -9,7 +9,6 @@ import (
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/kafka"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/observability"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/redis"
-	"github.com/michelsazevedo/tuenti/internal/infrastructure/resend"
 
 	"go.uber.org/fx"
 )
@@ -19,8 +18,7 @@ func main() {
 		fx.WithLogger(logging.NewZerologfx),
 		database.Db(),
 		redis.Redis(),
-		resend.Resend(),
-		kafka.Kafka(),
+		kafka.Broker(),
 		observability.Telemetry(),
 		identity.Identity(),
 		organization.Organization(),

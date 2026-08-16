@@ -8,6 +8,7 @@ import (
 	"github.com/michelsazevedo/tuenti/internal/core/organization/domain"
 	"github.com/michelsazevedo/tuenti/internal/core/organization/repository"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
+	"github.com/michelsazevedo/tuenti/internal/infrastructure/kafka"
 )
 
 func Organization() fx.Option {
@@ -22,6 +23,9 @@ func Organization() fx.Option {
 			},
 			func(pg *database.PgConn) domain.InvitationRepository {
 				return repository.NewInvitationRepository(pg.Pool())
+			},
+			func(producer *kafka.Producer) domain.InvitationEventPublisher {
+				return repository.NewEventPublisher(producer)
 			},
 			application.NewGetOrganizationByID,
 			application.NewMembershipAuthorizationService,

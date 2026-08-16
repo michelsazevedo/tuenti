@@ -25,8 +25,6 @@ services:
       - REDIS_HOST=redis:6379
       - REDIS_PASSWORD=
       - KAFKA_BROKERS=kafka:9092
-      - RESEND_API_KEY=test-key
-      - RESEND_FROM_EMAIL=test@example.com
       - PASSWORD_RESET_BASE_URL=http://localhost:3000/reset-password
       - EMAIL_CONFIRMATION_BASE_URL=http://localhost:3000/confirm-email
       - INVITATION_BASE_URL=http://localhost:3000/invitations/accept
