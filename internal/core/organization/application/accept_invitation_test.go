@@ -17,7 +17,7 @@ import (
 	identitydomain "github.com/michelsazevedo/tuenti/internal/core/identity/domain"
 	identitypersistence "github.com/michelsazevedo/tuenti/internal/core/identity/persistence"
 	"github.com/michelsazevedo/tuenti/internal/core/organization/domain"
-	"github.com/michelsazevedo/tuenti/internal/core/organization/repository"
+	"github.com/michelsazevedo/tuenti/internal/core/organization/persistence"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/config"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
 )
@@ -104,7 +104,7 @@ func newAcceptInvitationFixture(t *testing.T) *acceptInvitationFixture {
 
 	organization := &domain.Organization{Name: "Acme " + suffix}
 	organization.StartTrial(time.Now().UTC())
-	require.NoError(t, repository.NewOrganizationRepository(pool).Create(ctx, organization),
+	require.NoError(t, persistence.NewOrganizationRepository(pool).Create(ctx, organization),
 		"the fixture organization must be seeded")
 
 	inviter := &identitydomain.User{
@@ -120,7 +120,7 @@ func newAcceptInvitationFixture(t *testing.T) *acceptInvitationFixture {
 		UserId:         inviter.Id,
 		Role:           domain.RoleManager,
 	}
-	require.NoError(t, repository.NewMembershipRepository(pool).Create(ctx, inviterMembership),
+	require.NoError(t, persistence.NewMembershipRepository(pool).Create(ctx, inviterMembership),
 		"the inviter membership is the invited_by_membership_id foreign key target")
 
 	fixture := &acceptInvitationFixture{
@@ -189,7 +189,7 @@ func (f *acceptInvitationFixture) seedInvitation(
 		InvitedByMembershipId: f.inviterMembershipID,
 		ExpiresAt:             expiresAt,
 	}
-	require.NoError(t, repository.NewInvitationRepository(f.pool).Create(ctx, invitation),
+	require.NoError(t, persistence.NewInvitationRepository(f.pool).Create(ctx, invitation),
 		"the invitation must be seeded")
 
 	return acceptInvitationSeed{invitation: invitation, rawToken: rawToken}
@@ -210,21 +210,21 @@ func (f *acceptInvitationFixture) seedUser(t *testing.T, name, email string) *id
 func (f *acceptInvitationFixture) markInvitationRevoked(t *testing.T, id pgtype.UUID, at time.Time) {
 	t.Helper()
 
-	require.NoError(t, repository.NewInvitationRepository(f.pool).
+	require.NoError(t, persistence.NewInvitationRepository(f.pool).
 		MarkRevoked(acceptInvitationTestContext(t), id, at))
 }
 
 func (f *acceptInvitationFixture) markInvitationAccepted(t *testing.T, id pgtype.UUID, at time.Time) {
 	t.Helper()
 
-	require.NoError(t, repository.NewInvitationRepository(f.pool).
+	require.NoError(t, persistence.NewInvitationRepository(f.pool).
 		MarkAccepted(acceptInvitationTestContext(t), id, at))
 }
 
 func (f *acceptInvitationFixture) reloadInvitation(t *testing.T, id pgtype.UUID) *domain.Invitation {
 	t.Helper()
 
-	invitation, err := repository.NewInvitationRepository(f.pool).
+	invitation, err := persistence.NewInvitationRepository(f.pool).
 		FindByID(acceptInvitationTestContext(t), id)
 	require.NoError(t, err, "the seeded invitation must still be readable")
 
@@ -263,7 +263,7 @@ func TestAcceptInvitationAddsAnExistingUserToTheOrganization(t *testing.T) {
 	assert.Equal(t, user.Id, membership.UserId)
 	assert.Equal(t, domain.RoleAdmin, membership.Role, "the membership must inherit the invitation's role")
 
-	persisted, err := repository.NewMembershipRepository(fixture.pool).
+	persisted, err := persistence.NewMembershipRepository(fixture.pool).
 		FindByUserAndOrganization(ctx, user.Id, fixture.organizationID)
 	require.NoError(t, err, "the membership must have been committed")
 	assert.Equal(t, membership.Id, persisted.Id)

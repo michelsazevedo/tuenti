@@ -27,7 +27,7 @@ import (
 	orgapi "github.com/michelsazevedo/tuenti/internal/core/organization/api"
 	orgapp "github.com/michelsazevedo/tuenti/internal/core/organization/application"
 	orgdomain "github.com/michelsazevedo/tuenti/internal/core/organization/domain"
-	orgrepo "github.com/michelsazevedo/tuenti/internal/core/organization/repository"
+	orgpersistence "github.com/michelsazevedo/tuenti/internal/core/organization/persistence"
 	apphttp "github.com/michelsazevedo/tuenti/internal/http"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/config"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
@@ -132,7 +132,7 @@ func newResetEnv(t *testing.T) *resetEnv {
 	users := persistence.NewUserRepository(pool)
 	tokens := persistence.NewPasswordResetTokenRepository(pool)
 	refreshStore := persistence.NewRefreshTokenStore(client)
-	memberships := orgrepo.NewMembershipRepository(pool)
+	memberships := orgpersistence.NewMembershipRepository(pool)
 	publisher := &capturePublisher{}
 
 	authz := api.NewAuthzHandler(
@@ -156,7 +156,7 @@ func newResetEnv(t *testing.T) *resetEnv {
 		memberships,
 		apphttp.NewHealthzHandler(),
 		authz,
-		orgapi.NewOrganizationHandler(orgapp.NewGetOrganizationByID(orgrepo.NewOrganizationRepository(pool))),
+		orgapi.NewOrganizationHandler(orgapp.NewGetOrganizationByID(orgpersistence.NewOrganizationRepository(pool))),
 		orgapi.NewInvitationHandler(nil, nil, nil, nil),
 	)
 
@@ -281,9 +281,9 @@ func (env *resetEnv) createResetTestUser(t *testing.T) *domain.User {
 		TrialEndsAt:        now.Add(14 * 24 * time.Hour),
 		SubscriptionStatus: orgdomain.Trialing,
 	}
-	require.NoError(t, orgrepo.NewOrganizationRepository(env.pool).Create(ctx, org))
+	require.NoError(t, orgpersistence.NewOrganizationRepository(env.pool).Create(ctx, org))
 
-	require.NoError(t, orgrepo.NewMembershipRepository(env.pool).Create(ctx, &orgdomain.Membership{
+	require.NoError(t, orgpersistence.NewMembershipRepository(env.pool).Create(ctx, &orgdomain.Membership{
 		OrganizationId: org.Id,
 		UserId:         user.Id,
 		Role:           orgdomain.RoleManager,

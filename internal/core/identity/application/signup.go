@@ -11,7 +11,7 @@ import (
 	"github.com/michelsazevedo/tuenti/internal/core/identity/domain"
 	"github.com/michelsazevedo/tuenti/internal/core/identity/persistence"
 	orgdomain "github.com/michelsazevedo/tuenti/internal/core/organization/domain"
-	orgrepository "github.com/michelsazevedo/tuenti/internal/core/organization/repository"
+	orgpersistence "github.com/michelsazevedo/tuenti/internal/core/organization/persistence"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/config"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/observability"
@@ -60,13 +60,13 @@ func (s *signup) SignUp(ctx context.Context, user *domain.User, organizationName
 		org := &orgdomain.Organization{Name: organizationName}
 		org.StartTrial(time.Now().UTC())
 
-		if err := orgrepository.NewOrganizationRepository(tx).Create(ctx, org); err != nil {
+		if err := orgpersistence.NewOrganizationRepository(tx).Create(ctx, org); err != nil {
 			return err
 		}
 
 		membership := &orgdomain.Membership{OrganizationId: org.Id, UserId: user.Id, Role: orgdomain.RoleManager}
 
-		if err := orgrepository.NewMembershipRepository(tx).Create(ctx, membership); err != nil {
+		if err := orgpersistence.NewMembershipRepository(tx).Create(ctx, membership); err != nil {
 			return err
 		}
 

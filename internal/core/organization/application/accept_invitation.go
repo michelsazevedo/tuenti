@@ -13,7 +13,7 @@ import (
 	identitydomain "github.com/michelsazevedo/tuenti/internal/core/identity/domain"
 	identitypersistence "github.com/michelsazevedo/tuenti/internal/core/identity/persistence"
 	"github.com/michelsazevedo/tuenti/internal/core/organization/domain"
-	"github.com/michelsazevedo/tuenti/internal/core/organization/repository"
+	"github.com/michelsazevedo/tuenti/internal/core/organization/persistence"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/observability"
 )
@@ -71,15 +71,15 @@ func (a *acceptInvitation) AcceptInvitation(
 }
 
 type acceptInvitationRepositories struct {
-	invitations *repository.InvitationRepository
-	memberships *repository.MembershipRepository
+	invitations *persistence.InvitationRepository
+	memberships *persistence.MembershipRepository
 	users       *identitypersistence.UserRepository
 }
 
 func newAcceptInvitationRepositories(tx pgx.Tx) *acceptInvitationRepositories {
 	return &acceptInvitationRepositories{
-		invitations: repository.NewInvitationRepository(tx),
-		memberships: repository.NewMembershipRepository(tx),
+		invitations: persistence.NewInvitationRepository(tx),
+		memberships: persistence.NewMembershipRepository(tx),
 		users:       identitypersistence.NewUserRepository(tx),
 	}
 }

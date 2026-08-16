@@ -18,30 +18,14 @@ Plus *some* of packages, a complete list of which is at [/master/go.mod](https:/
 ### Requirements
 - Go 1.26+
 - PostgreSQL 16+
+- Kafka
 - Docker (optional)
 
 ### Getting Started
 
 #### Running with Make
 
-Before running the application, export the following variables:
-
-```ssh
-export POSTGRES_USER=
-export POSTGRES_PASSWORD=
-export POSTGRES_DB=
-export POSTGRES_HOST=
-
-export REDIS_HOST=
-export REDIS_PASSWORD=
-
-export PASSWORD_RESET_BASE_URL=
-export EMAIL_CONFIRMATION_BASE_URL=
-export INVITATION_BASE_URL=
-
-export ENV_APP=development
-export OTLP_ENDPOINT=
-```
+Before running the application, copy `.env.example` to `.env` and fill in the values — the Makefile loads it automatically.
 
 1. Run the local app with `make run` and tuenti will perform requests.
 
@@ -51,6 +35,8 @@ export OTLP_ENDPOINT=
 [Docker](www.docker.com) is an open platform for developers and sysadmins to build, ship, and run distributed applications, whether on laptops, data center VMs, or the cloud.
 
 If you haven't used Docker before, it would be good idea to read this article first: Install [Docker Engine](https://docs.docker.com/engine/installation/)
+
+Before running the application, copy `.env.example` to `.env` and fill in the values.
 
 1. Install [Docker](https://www.docker.com/what-docker) and then [Docker Compose](https://docs.docker.com/compose/):
 
@@ -62,49 +48,27 @@ If you haven't used Docker before, it would be good idea to read this article fi
 
 ### Scheduled Jobs
 
-`cmd/jobs` is a one-shot command: it runs the expired-trial suspension sweep once — moving every organization whose trial window has closed from `trialing` to `suspended` — and then exits. It starts no HTTP listener, and running it twice back to back is safe, since the second run finds nothing left to suspend.
-
-Run it manually from the repository root:
+`cmd/jobs` runs the expired-trial suspension sweep once, moving every organization whose trial window has closed from `trialing` to `suspended`, then exits.
 
 ```ssh
 go run ./cmd/jobs
 ```
 
-It must run from the repository root, because pending migrations are applied on boot from `./db/migrations` — the same way the API server does it.
+On success, it logs a structured summary (`found` / `suspended` / `failed`) and exits `0` — including when zero trials had expired.
 
-It needs the **same environment variables as the main server** (the full list is under [Running with Make](#running-with-make)). That includes `PASSWORD_RESET_BASE_URL`, `EMAIL_CONFIRMATION_BASE_URL`, and `INVITATION_BASE_URL`, even though the job never sends email: configuration is validated as a whole rather than per binary, so it refuses to start when they are missing.
-
-Exit codes:
-
-| Code | Meaning |
-| ---- | ------- |
-| `0`  | The sweep completed, including when it found zero expired trials |
-| `1`  | The job could not boot, or at least one organization failed to suspend |
-
-Each run logs a structured summary (`found` / `suspended` / `failed`, plus the job outcome and duration) before exiting.
-
-The daily cadence lives outside this repository: point an external scheduler — a Kubernetes `CronJob`, a cloud scheduler, or plain `cron` — at the command once a day and alert on a non-zero exit code. No deployment manifest is included here, as that is a deployment-environment concern.
+On failure, it logs why (boot failure, or a suspension that failed) and exits `1`.
 
 ### Database Seeds
 
-`cmd/seed` populates reference data — data that the application depends on but that shouldn't be created through manual `INSERT` statements, such as the list of Industries. It's a one-shot command: it runs every registered seed once, in order, and exits. Seeds are idempotent (they `UPSERT` by a unique key), so running the command any number of times — in local, staging, or production — never creates duplicates.
-
-Run it manually from the repository root:
+`cmd/seed` populates reference data the application depends on, such as the list of Industries. It's idempotent, so running it any number of times never creates duplicates.
 
 ```ssh
 go run cmd/seed/main.go
 ```
 
-It must run from the repository root, for the same reason as `cmd/jobs`: pending migrations are applied on boot from `./db/migrations`, and it needs the **same environment variables as the main server** (see [Running with Make](#running-with-make)).
+On success, it logs each seed's start/completion plus a final summary, and exits `0`.
 
-Exit codes:
-
-| Code | Meaning |
-| ---- | ------- |
-| `0`  | Every registered seed completed successfully |
-| `1`  | The runner could not boot, or a seed failed (remaining seeds are skipped) |
-
-Each seed logs its own start/success/failure with a duration, plus a final summary once all seeds have run.
+On failure, it logs which seed failed and why, then exits `1`.
 
 **Adding a new seed:** implement the `Seed` interface (`Run(ctx context.Context) error`) in a new file under `cmd/seed/seeds/`, then register an instance of it in the `registry` slice in `cmd/seed/main.go`. See `cmd/seed/seeds/industries.go` for a working example — its `industryNames` list is the single source of truth for that seed's data, so adding an industry is just adding a string there and re-running the command.
 

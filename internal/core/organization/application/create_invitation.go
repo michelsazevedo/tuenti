@@ -12,7 +12,7 @@ import (
 	identitydomain "github.com/michelsazevedo/tuenti/internal/core/identity/domain"
 	identitypersistence "github.com/michelsazevedo/tuenti/internal/core/identity/persistence"
 	"github.com/michelsazevedo/tuenti/internal/core/organization/domain"
-	"github.com/michelsazevedo/tuenti/internal/core/organization/repository"
+	"github.com/michelsazevedo/tuenti/internal/core/organization/persistence"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/config"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/observability"
@@ -81,7 +81,7 @@ func (c *createInvitation) CreateInvitation(
 	)
 
 	err = c.uow.Do(ctx, func(tx pgx.Tx) error {
-		organization, err := repository.NewOrganizationRepository(tx).FindByID(ctx, organizationID)
+		organization, err := persistence.NewOrganizationRepository(tx).FindByID(ctx, organizationID)
 		if err != nil {
 			return err
 		}
@@ -112,7 +112,7 @@ func (c *createInvitation) CreateInvitation(
 			ExpiresAt:             now.Add(invitationTokenTTL),
 		}
 
-		return repository.NewInvitationRepository(tx).Create(ctx, invitation)
+		return persistence.NewInvitationRepository(tx).Create(ctx, invitation)
 	})
 	if err != nil {
 		return nil, err
@@ -139,7 +139,7 @@ func (c *createInvitation) ensureNotAlreadyMember(
 		return err
 	}
 
-	_, err = repository.NewMembershipRepository(tx).FindByUserAndOrganization(ctx, user.Id, organizationID)
+	_, err = persistence.NewMembershipRepository(tx).FindByUserAndOrganization(ctx, user.Id, organizationID)
 	if err == nil {
 		return domain.ErrAlreadyMember
 	}
@@ -157,7 +157,7 @@ func (c *createInvitation) ensureNoPendingInvitation(
 	email string,
 	organizationID pgtype.UUID,
 ) error {
-	_, err := repository.NewInvitationRepository(tx).FindPendingByEmailAndOrganization(ctx, email, organizationID)
+	_, err := persistence.NewInvitationRepository(tx).FindPendingByEmailAndOrganization(ctx, email, organizationID)
 	if err == nil {
 		return domain.ErrDuplicateInvitation
 	}

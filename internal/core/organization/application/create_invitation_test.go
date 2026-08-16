@@ -19,7 +19,7 @@ import (
 	identitydomain "github.com/michelsazevedo/tuenti/internal/core/identity/domain"
 	identitypersistence "github.com/michelsazevedo/tuenti/internal/core/identity/persistence"
 	"github.com/michelsazevedo/tuenti/internal/core/organization/domain"
-	"github.com/michelsazevedo/tuenti/internal/core/organization/repository"
+	"github.com/michelsazevedo/tuenti/internal/core/organization/persistence"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/config"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
 )
@@ -62,7 +62,7 @@ func newCreateInvitationUseCase(
 ) CreateInvitationUseCase {
 	return NewCreateInvitation(
 		database.NewUnitOfWork(pgConn),
-		NewMembershipAuthorizationService(repository.NewMembershipRepository(pgConn.Pool())),
+		NewMembershipAuthorizationService(persistence.NewMembershipRepository(pgConn.Pool())),
 		publisher,
 		&config.Config{Settings: config.Settings{InvitationBaseURL: createInvitationBaseURL}},
 	)
@@ -93,7 +93,7 @@ func newCreateInvitationFixture(t *testing.T, pgConn *database.PgConn, inviterRo
 	organization := &domain.Organization{Name: "Acme " + suffix}
 	organization.StartTrial(time.Now().UTC())
 
-	require.NoError(t, repository.NewOrganizationRepository(pgConn.Pool()).Create(ctx, organization),
+	require.NoError(t, persistence.NewOrganizationRepository(pgConn.Pool()).Create(ctx, organization),
 		"seeding the organization must succeed")
 
 	fixture := &createInvitationFixture{
@@ -131,7 +131,7 @@ func (f *createInvitationFixture) addNamedMember(
 	f.userIDs = append(f.userIDs, user.Id)
 
 	membership := &domain.Membership{OrganizationId: f.organizationID, UserId: user.Id, Role: role}
-	require.NoError(t, repository.NewMembershipRepository(f.pool).Create(ctx, membership),
+	require.NoError(t, persistence.NewMembershipRepository(f.pool).Create(ctx, membership),
 		"seeding the membership must succeed")
 
 	return createInvitationMember{userID: user.Id, membershipID: membership.Id, name: name, email: email}

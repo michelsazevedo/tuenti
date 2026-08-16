@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/michelsazevedo/tuenti/internal/core/organization/domain"
-	"github.com/michelsazevedo/tuenti/internal/core/organization/repository"
+	"github.com/michelsazevedo/tuenti/internal/core/organization/persistence"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/config"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
 )
@@ -110,7 +110,7 @@ func newRevokeInvitationOrg(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 	org := &domain.Organization{Name: "Acme " + suffix}
 	org.StartTrial(time.Now().UTC())
 
-	require.NoError(t, repository.NewOrganizationRepository(pool).Create(ctx, org),
+	require.NoError(t, persistence.NewOrganizationRepository(pool).Create(ctx, org),
 		"seeding the organization must succeed")
 
 	seeded := &revokeInvitationOrg{pool: pool, id: org.Id}
@@ -132,7 +132,7 @@ func (o *revokeInvitationOrg) addMember(
 	userID = o.addUser(t, ctx, "Bugs Bunny")
 
 	membership := &domain.Membership{OrganizationId: o.id, UserId: userID, Role: role}
-	require.NoError(t, repository.NewMembershipRepository(o.pool).Create(ctx, membership),
+	require.NoError(t, persistence.NewMembershipRepository(o.pool).Create(ctx, membership),
 		"seeding the membership must succeed")
 
 	return userID, membership.Id
@@ -172,7 +172,7 @@ func (o *revokeInvitationOrg) createInvitation(
 		ExpiresAt:             time.Now().UTC().Add(revokeInvitationTTL),
 	}
 
-	require.NoError(t, repository.NewInvitationRepository(o.pool).Create(ctx, invitation),
+	require.NoError(t, persistence.NewInvitationRepository(o.pool).Create(ctx, invitation),
 		"seeding the invitation must succeed")
 
 	return invitation
@@ -231,7 +231,7 @@ func (o *revokeInvitationOrg) cleanup(t *testing.T) {
 func newRevokeInvitationUseCase(pgConn *database.PgConn) RevokeInvitationUseCase {
 	return NewRevokeInvitation(
 		database.NewUnitOfWork(pgConn),
-		NewMembershipAuthorizationService(repository.NewMembershipRepository(pgConn.Pool())),
+		NewMembershipAuthorizationService(persistence.NewMembershipRepository(pgConn.Pool())),
 	)
 }
 
