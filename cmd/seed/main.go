@@ -77,7 +77,6 @@ func run() int {
 	return exitCode
 }
 
-// registry is the ordered list of seeds to apply. Append new seeds here.
 func registry(pgConn *database.PgConn) []Seed {
 	return []Seed{
 		seeds.NewIndustriesSeed(pgConn.Pool()),

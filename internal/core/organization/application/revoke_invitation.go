@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/michelsazevedo/tuenti/internal/core/organization/domain"
-	"github.com/michelsazevedo/tuenti/internal/core/organization/repository"
+	"github.com/michelsazevedo/tuenti/internal/core/organization/persistence"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/observability"
 )
@@ -35,7 +35,7 @@ func (u *revokeInvitation) RevokeInvitation(
 	}
 
 	return u.uow.Do(ctx, func(tx pgx.Tx) error {
-		invitations := repository.NewInvitationRepository(tx)
+		invitations := persistence.NewInvitationRepository(tx)
 
 		invitation, err := invitations.FindByID(ctx, invitationID)
 		if err != nil {

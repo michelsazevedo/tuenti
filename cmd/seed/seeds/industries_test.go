@@ -74,7 +74,7 @@ func TestIndustriesSeed_Run(t *testing.T) {
 	t.Run("leaves rows outside the list untouched", func(t *testing.T) {
 		sentinel := "ZZ Seed Test " + randomSuffix(t)
 
-		_, err := pool.Exec(ctx, `INSERT INTO industries (name) VALUES ($1)`, sentinel)
+		_, err := pool.Exec(ctx, `INSERT INTO industries (name, slug) VALUES ($1, $2)`, sentinel, industrySlug(sentinel))
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			_, err := pool.Exec(ctx, `DELETE FROM industries WHERE name = $1`, sentinel)

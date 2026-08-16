@@ -6,7 +6,7 @@ import (
 	"github.com/michelsazevedo/tuenti/internal/core/organization/api"
 	"github.com/michelsazevedo/tuenti/internal/core/organization/application"
 	"github.com/michelsazevedo/tuenti/internal/core/organization/domain"
-	"github.com/michelsazevedo/tuenti/internal/core/organization/repository"
+	"github.com/michelsazevedo/tuenti/internal/core/organization/persistence"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/kafka"
 )
@@ -16,16 +16,16 @@ func Organization() fx.Option {
 		"organization",
 		fx.Provide(
 			func(pg *database.PgConn) domain.OrganizationRepository {
-				return repository.NewOrganizationRepository(pg.Pool())
+				return persistence.NewOrganizationRepository(pg.Pool())
 			},
 			func(pg *database.PgConn) domain.MembershipRepository {
-				return repository.NewMembershipRepository(pg.Pool())
+				return persistence.NewMembershipRepository(pg.Pool())
 			},
 			func(pg *database.PgConn) domain.InvitationRepository {
-				return repository.NewInvitationRepository(pg.Pool())
+				return persistence.NewInvitationRepository(pg.Pool())
 			},
 			func(producer *kafka.Producer) domain.InvitationEventPublisher {
-				return repository.NewEventPublisher(producer)
+				return persistence.NewEventPublisher(producer)
 			},
 			application.NewGetOrganizationByID,
 			application.NewMembershipAuthorizationService,
