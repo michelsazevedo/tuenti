@@ -44,8 +44,6 @@ func (p *Producer) Publish(ctx context.Context, topic, key string, payload any) 
 	return nil
 }
 
-// Close releases the connections the underlying writer keeps open to the
-// brokers. It is called once, from the fx OnStop hook.
 func (p *Producer) Close() error {
 	if err := p.writer.Close(); err != nil {
 		return fmt.Errorf("closing kafka producer: %w", err)

@@ -18,8 +18,6 @@ const (
 	invitationID = "9c1e7a44-3b2d-4e5f-8a6b-7c8d9e0f1a2b"
 )
 
-// publishFunc lets one table cover the three interfaces the EventPublisher
-// implements, since each takes a differently typed event.
 type publishFunc func(context.Context, *EventPublisher) error
 
 type publishCase struct {

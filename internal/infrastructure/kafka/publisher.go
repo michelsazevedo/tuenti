@@ -12,11 +12,6 @@ const (
 	organizationEventsTopic = "organization.events"
 )
 
-// EventPublisher adapts the low level Producer to the publisher interfaces owned
-// by each bounded context. It holds no state of its own: every method maps a
-// domain event onto a topic and a partition key, and delegates the encoding and
-// the write to the Producer. Publish failures are deliberately returned as-is —
-// the best-effort logging policy belongs to the application layer.
 type EventPublisher struct {
 	producer *Producer
 }
