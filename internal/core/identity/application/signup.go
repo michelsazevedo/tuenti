@@ -25,20 +25,17 @@ type SignupUseCase interface {
 
 type signup struct {
 	uow       *database.UnitOfWork
-	mailer    domain.ConfirmationMailer
 	publisher domain.ConfirmationEventPublisher
 	baseURL   string
 }
 
 func NewSignup(
 	uow *database.UnitOfWork,
-	mailer domain.ConfirmationMailer,
 	publisher domain.ConfirmationEventPublisher,
 	conf *config.Config,
 ) SignupUseCase {
 	return &signup{
 		uow:       uow,
-		mailer:    mailer,
 		publisher: publisher,
 		baseURL:   conf.Settings.EmailConfirmationBaseURL,
 	}
@@ -92,27 +89,12 @@ func (s *signup) SignUp(ctx context.Context, user *domain.User, organizationName
 
 	confirmationURL := s.baseURL + "?token=" + url.QueryEscape(rawToken)
 
-	if err := s.mailer.SendWelcomeConfirmation(ctx, user.Email, confirmationURL); err != nil {
-		logConfirmationEmailFailure(ctx, user, err)
-	}
-
 	event := domain.NewEmailConfirmationRequested(user.Id.String(), user.Name, user.Email, confirmationURL)
 	if err := s.publisher.PublishEmailConfirmationRequested(ctx, event); err != nil {
 		logConfirmationEventPublishFailure(ctx, user, err)
 	}
 
 	return nil
-}
-
-func logConfirmationEmailFailure(ctx context.Context, user *domain.User, err error) {
-	logger := observability.Logger(ctx)
-
-	logger.Error().
-		Str("event", "confirmation_email_send_failed").
-		Str("user_id", user.Id.String()).
-		Str("email", user.Email).
-		Err(err).
-		Msg("Confirmation email delivery failed; the issued token remains valid for its TTL")
 }
 
 func logConfirmationEventPublishFailure(ctx context.Context, user *domain.User, err error) {

@@ -28,31 +28,6 @@ const (
 	signupConfirmBaseURL = "https://app.example.com/confirm-email"
 )
 
-type sentWelcomeConfirmation struct {
-	ctx             context.Context
-	toEmail         string
-	confirmationURL string
-}
-
-type recordingConfirmationMailer struct {
-	sendErr error
-	sent    []sentWelcomeConfirmation
-}
-
-func (m *recordingConfirmationMailer) SendWelcomeConfirmation(ctx context.Context, toEmail, confirmationURL string) error {
-	m.sent = append(m.sent, sentWelcomeConfirmation{ctx: ctx, toEmail: toEmail, confirmationURL: confirmationURL})
-
-	return m.sendErr
-}
-
-func (m *recordingConfirmationMailer) only(t *testing.T) sentWelcomeConfirmation {
-	t.Helper()
-
-	require.Len(t, m.sent, 1, "exactly one welcome confirmation email must have been sent")
-
-	return m.sent[0]
-}
-
 type recordingConfirmationEventPublisher struct {
 	publishErr error
 	published  []domain.EmailConfirmationRequested
@@ -94,12 +69,10 @@ func requireConfirmationEventMatches(
 
 func newSignup(
 	pgConn *database.PgConn,
-	mailer domain.ConfirmationMailer,
 	publisher domain.ConfirmationEventPublisher,
 ) SignupUseCase {
 	return NewSignup(
 		database.NewUnitOfWork(pgConn),
-		mailer,
 		publisher,
 		&config.Config{Settings: config.Settings{EmailConfirmationBaseURL: signupConfirmBaseURL}},
 	)
@@ -185,8 +158,6 @@ func newTestPgConn(t *testing.T) *database.PgConn {
 	setDefaultEnv(t, "POSTGRES_USER", "tuenti")
 	setDefaultEnv(t, "POSTGRES_PASSWORD", "tuentipwd")
 	setDefaultEnv(t, "POSTGRES_DB", "tuenti")
-	setDefaultEnv(t, "RESEND_API_KEY", "test-key")
-	setDefaultEnv(t, "RESEND_FROM_EMAIL", "test@example.com")
 	setDefaultEnv(t, "PASSWORD_RESET_BASE_URL", "http://localhost:3000/reset-password")
 	setDefaultEnv(t, "EMAIL_CONFIRMATION_BASE_URL", "http://localhost:3000/confirm-email")
 	setDefaultEnv(t, "INVITATION_BASE_URL", "http://localhost:3000/invitations")
@@ -251,7 +222,7 @@ func TestSignUpCreatesUserOrganizationAndOwnerMembership(t *testing.T) {
 	}
 	organizationName := "Acme " + suffix
 
-	require.NoError(t, newSignup(pgConn, &recordingConfirmationMailer{}, &recordingConfirmationEventPublisher{}).
+	require.NoError(t, newSignup(pgConn, &recordingConfirmationEventPublisher{}).
 		SignUp(ctx, user, organizationName))
 
 	require.True(t, user.Id.Valid, "the user id must be returned by the insert")
@@ -273,7 +244,7 @@ func TestSignUpCreatesUserOrganizationAndOwnerMembership(t *testing.T) {
 	assert.NotEmpty(t, user.PasswordDigest)
 }
 
-func TestSignUpCreatesAConfirmationTokenAndSendsTheWelcomeEmail(t *testing.T) {
+func TestSignUpCreatesAConfirmationTokenAndPublishesTheConfirmationEvent(t *testing.T) {
 	pgConn := newTestPgConn(t)
 	pool := pgConn.Pool()
 	ctx := testContext(t)
@@ -286,10 +257,9 @@ func TestSignUpCreatesAConfirmationTokenAndSendsTheWelcomeEmail(t *testing.T) {
 	}
 	organizationName := "Acme " + suffix
 
-	mailer := &recordingConfirmationMailer{}
 	publisher := &recordingConfirmationEventPublisher{}
 
-	require.NoError(t, newSignup(pgConn, mailer, publisher).SignUp(ctx, user, organizationName))
+	require.NoError(t, newSignup(pgConn, publisher).SignUp(ctx, user, organizationName))
 	require.True(t, user.Id.Valid, "the user id must be returned by the insert")
 
 	membership := requireOwnerMembership(t, pool, user.Id, organizationName)
@@ -321,62 +291,15 @@ func TestSignUpCreatesAConfirmationTokenAndSendsTheWelcomeEmail(t *testing.T) {
 	assert.WithinDuration(t, createdAt.Add(24*time.Hour), expiresAt, 5*time.Second,
 		"the confirmation token must live for 24 hours from its creation")
 
-	sent := mailer.only(t)
-	assert.Equal(t, user.Email, sent.toEmail, "the welcome email must go to the address being confirmed")
-	assert.True(t, strings.HasPrefix(sent.confirmationURL, signupConfirmBaseURL+"?token="),
-		"the link must be built from the configured base URL, got %q", sent.confirmationURL)
+	published := publisher.only(t)
+	assert.True(t, strings.HasPrefix(published.ConfirmationURL, signupConfirmBaseURL+"?token="),
+		"the link must be built from the configured base URL, got %q", published.ConfirmationURL)
+	requireConfirmationEventMatches(t, published, user, published.ConfirmationURL)
 
-	rawToken := rawTokenFromConfirmationURL(t, sent.confirmationURL)
+	rawToken := rawTokenFromConfirmationURL(t, published.ConfirmationURL)
 	assert.NotEqual(t, rawToken, tokenDigest, "the raw token must never be stored")
 	assert.Equal(t, domain.HashEmailConfirmationToken(rawToken), tokenDigest,
 		"the emailed token must hash to the stored digest")
-
-	published := publisher.only(t)
-	requireConfirmationEventMatches(t, published, user, sent.confirmationURL)
-}
-
-func TestSignUpSucceedsEvenWhenTheWelcomeEmailFailsToSend(t *testing.T) {
-	pgConn := newTestPgConn(t)
-	pool := pgConn.Pool()
-	ctx := testContext(t)
-
-	suffix := randomSuffix(t)
-	user := &domain.User{
-		Name:     "Daffy Duck " + suffix,
-		Email:    "daffy." + suffix + "@example.com",
-		Password: "supersecret",
-	}
-	organizationName := "Acme " + suffix
-
-	mailer := &recordingConfirmationMailer{sendErr: errors.New("resend unavailable")}
-	publisher := &recordingConfirmationEventPublisher{}
-
-	require.NoError(t, newSignup(pgConn, mailer, publisher).SignUp(ctx, user, organizationName),
-		"a failing mailer must not fail the signup")
-	require.True(t, user.Id.Valid, "the user id must be returned by the insert")
-
-	membership := requireOwnerMembership(t, pool, user.Id, organizationName)
-
-	t.Cleanup(func() {
-		deleteSignupRows(t, pool, user.Id, membership.organizationID, membership.id)
-	})
-
-	assert.Equal(t, orgdomain.RoleManager, membership.role, "the first membership must own the organization")
-
-	sent := mailer.only(t)
-	assert.Equal(t, user.Email, sent.toEmail, "the delivery must have been attempted before it failed")
-
-	persisted, err := persistence.NewUserRepository(pool).FindByEmail(ctx, user.Email)
-	require.NoError(t, err, "the user must survive a failed welcome email")
-	assert.Equal(t, user.Id, persisted.Id)
-
-	var tokens int
-	require.NoError(t, pool.QueryRow(ctx,
-		`SELECT count(*) FROM email_confirmation_tokens WHERE user_id = $1 AND used_at IS NULL`,
-		user.Id).Scan(&tokens))
-	assert.Equal(t, 1, tokens, "the issued token must remain valid so the link can be resent")
-
-	requireConfirmationEventMatches(t, publisher.only(t), user, sent.confirmationURL)
 }
 
 func TestSignUpSucceedsEvenWhenTheConfirmationEventFailsToPublish(t *testing.T) {
@@ -392,10 +315,9 @@ func TestSignUpSucceedsEvenWhenTheConfirmationEventFailsToPublish(t *testing.T) 
 	}
 	organizationName := "Acme " + suffix
 
-	mailer := &recordingConfirmationMailer{}
 	publisher := &recordingConfirmationEventPublisher{publishErr: errors.New("kafka unavailable")}
 
-	require.NoError(t, newSignup(pgConn, mailer, publisher).SignUp(ctx, user, organizationName),
+	require.NoError(t, newSignup(pgConn, publisher).SignUp(ctx, user, organizationName),
 		"a failing event publisher must not fail the signup")
 	require.True(t, user.Id.Valid, "the user id must be returned by the insert")
 
@@ -405,13 +327,10 @@ func TestSignUpSucceedsEvenWhenTheConfirmationEventFailsToPublish(t *testing.T) 
 		deleteSignupRows(t, pool, user.Id, membership.organizationID, membership.id)
 	})
 
-	sent := mailer.only(t)
-	assert.Equal(t, user.Email, sent.toEmail,
-		"the confirmation email must still go out when only the event publish fails")
+	published := publisher.only(t)
+	requireConfirmationEventMatches(t, published, user, published.ConfirmationURL)
 
-	requireConfirmationEventMatches(t, publisher.only(t), user, sent.confirmationURL)
-
-	rawToken := rawTokenFromConfirmationURL(t, sent.confirmationURL)
+	rawToken := rawTokenFromConfirmationURL(t, published.ConfirmationURL)
 
 	stored, err := persistence.NewEmailConfirmationTokenRepository(pool).
 		FindByDigest(ctx, domain.HashEmailConfirmationToken(rawToken))
@@ -434,13 +353,11 @@ func TestSignUpRollsBackEverythingWhenTheMembershipInsertFails(t *testing.T) {
 
 	withForcedMembershipInsertFailure(t, pool, organizationName)
 
-	mailer := &recordingConfirmationMailer{}
 	publisher := &recordingConfirmationEventPublisher{}
 
-	err := newSignup(pgConn, mailer, publisher).SignUp(ctx, user, organizationName)
+	err := newSignup(pgConn, publisher).SignUp(ctx, user, organizationName)
 	require.Error(t, err, "a failing membership insert must fail the whole signup")
 
-	assert.Empty(t, mailer.sent, "a rolled back signup must never send a live confirmation link")
 	assert.Empty(t, publisher.published, "a rolled back signup must never announce a live confirmation link")
 
 	_, err = persistence.NewUserRepository(pool).FindByEmail(ctx, user.Email)

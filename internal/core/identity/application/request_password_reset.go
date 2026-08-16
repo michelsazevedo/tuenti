@@ -21,7 +21,6 @@ type RequestPasswordResetUseCase interface {
 type requestPasswordReset struct {
 	users     domain.UserRepository
 	tokens    domain.PasswordResetTokenRepository
-	mailer    domain.PasswordResetMailer
 	publisher domain.PasswordResetEventPublisher
 	baseURL   string
 }
@@ -29,14 +28,12 @@ type requestPasswordReset struct {
 func NewRequestPasswordReset(
 	users domain.UserRepository,
 	tokens domain.PasswordResetTokenRepository,
-	mailer domain.PasswordResetMailer,
 	publisher domain.PasswordResetEventPublisher,
 	conf *config.Config,
 ) RequestPasswordResetUseCase {
 	return &requestPasswordReset{
 		users:     users,
 		tokens:    tokens,
-		mailer:    mailer,
 		publisher: publisher,
 		baseURL:   conf.Settings.PasswordResetBaseURL,
 	}
@@ -73,27 +70,12 @@ func (s *requestPasswordReset) RequestPasswordReset(ctx context.Context, email s
 
 	link := s.baseURL + "?token=" + url.QueryEscape(rawToken)
 
-	if err := s.mailer.SendPasswordResetEmail(ctx, user.Email, link); err != nil {
-		logPasswordResetEmailFailure(ctx, user, err)
-	}
-
 	event := domain.NewPasswordResetRequested(user.Id.String(), user.Name, user.Email, link)
 	if err := s.publisher.PublishPasswordResetRequested(ctx, event); err != nil {
 		logPasswordResetEventPublishFailure(ctx, user, err)
 	}
 
 	return nil
-}
-
-func logPasswordResetEmailFailure(ctx context.Context, user *domain.User, err error) {
-	logger := observability.Logger(ctx)
-
-	logger.Error().
-		Str("event", "password_reset_email_send_failed").
-		Str("user_id", user.Id.String()).
-		Str("email", user.Email).
-		Err(err).
-		Msg("Password reset email delivery failed; the issued token remains valid for its TTL")
 }
 
 func logPasswordResetEventPublishFailure(ctx context.Context, user *domain.User, err error) {

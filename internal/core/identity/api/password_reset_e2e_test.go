@@ -61,10 +61,10 @@ func (env *resetEnv) completeReset(t *testing.T, email, newPassword string) stri
 	requested := env.requestReset(t, email)
 	require.Equal(t, http.StatusOK, requested.Code)
 
-	messages := env.mailer.messages()
-	require.NotEmpty(t, messages, "the reset request must have produced a mail to take the token from")
+	events := env.publisher.events()
+	require.NotEmpty(t, events, "the reset request must have produced an event to take the token from")
 
-	rawToken := messages[len(messages)-1].token(t)
+	rawToken := resetTokenFromLink(t, events[len(events)-1].ResetURL)
 
 	confirmed := env.confirmReset(t, rawToken, newPassword)
 	require.Equal(t, http.StatusOK, confirmed.Code, "body: %s", confirmed.Body.String())
@@ -144,11 +144,11 @@ func TestASecondResetRequestSupersedesTheFirstToken(t *testing.T) {
 	require.Equal(t, http.StatusOK, env.requestReset(t, user.Email).Code)
 	require.Equal(t, http.StatusOK, env.requestReset(t, user.Email).Code)
 
-	messages := env.mailer.messages()
-	require.Len(t, messages, 2, "each request must produce its own mail")
+	events := env.publisher.events()
+	require.Len(t, events, 2, "each request must produce its own event")
 
-	superseded := messages[0].token(t)
-	current := messages[1].token(t)
+	superseded := resetTokenFromLink(t, events[0].ResetURL)
+	current := resetTokenFromLink(t, events[1].ResetURL)
 
 	require.NotEqual(t, superseded, current,
 		"a second request that reissued the same token would make supersession meaningless")

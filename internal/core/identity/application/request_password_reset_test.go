@@ -19,31 +19,6 @@ import (
 
 const requestResetBaseURL = "https://app.example.com/reset-password"
 
-type sentPasswordResetEmail struct {
-	ctx       context.Context
-	toEmail   string
-	resetLink string
-}
-
-type recordingPasswordResetMailer struct {
-	sendErr error
-	sent    []sentPasswordResetEmail
-}
-
-func (m *recordingPasswordResetMailer) SendPasswordResetEmail(ctx context.Context, toEmail, resetLink string) error {
-	m.sent = append(m.sent, sentPasswordResetEmail{ctx: ctx, toEmail: toEmail, resetLink: resetLink})
-
-	return m.sendErr
-}
-
-func (m *recordingPasswordResetMailer) only(t *testing.T) sentPasswordResetEmail {
-	t.Helper()
-
-	require.Len(t, m.sent, 1, "exactly one password reset email must have been sent")
-
-	return m.sent[0]
-}
-
 type recordingPasswordResetEventPublisher struct {
 	publishErr error
 	published  []domain.PasswordResetRequested
@@ -84,13 +59,11 @@ func requirePasswordResetEventMatches(
 
 func newRequestPasswordReset(
 	pool *pgxpool.Pool,
-	mailer domain.PasswordResetMailer,
 	publisher domain.PasswordResetEventPublisher,
 ) RequestPasswordResetUseCase {
 	return NewRequestPasswordReset(
 		persistence.NewUserRepository(pool),
 		persistence.NewPasswordResetTokenRepository(pool),
-		mailer,
 		publisher,
 		&config.Config{Settings: config.Settings{PasswordResetBaseURL: requestResetBaseURL}},
 	)
@@ -164,55 +137,49 @@ func TestRequestPasswordResetIsSilentForAnUnknownEmail(t *testing.T) {
 	pool := pgConn.Pool()
 	ctx := testContext(t)
 
-	mailer := &recordingPasswordResetMailer{}
 	publisher := &recordingPasswordResetEventPublisher{}
 	tokensBefore := countPasswordResetTokens(t, ctx, pool)
 
-	err := newRequestPasswordReset(pool, mailer, publisher).
+	err := newRequestPasswordReset(pool, publisher).
 		RequestPasswordReset(ctx, "nobody."+randomSuffix(t)+"@example.com")
 
 	require.NoError(t, err, "an unknown address must not be distinguishable from a known one")
 
-	assert.Empty(t, mailer.sent, "no mail may be sent for an address with no user")
 	assert.Empty(t, publisher.published, "no event may be published for an address with no user")
 	assert.Equal(t, tokensBefore, countPasswordResetTokens(t, ctx, pool),
 		"no token may be issued for an address with no user")
 }
 
-func TestRequestPasswordResetIssuesATokenAndMailsTheRawSecret(t *testing.T) {
+func TestRequestPasswordResetIssuesATokenAndPublishesTheRawSecret(t *testing.T) {
 	pgConn := newTestPgConn(t)
 	pool := pgConn.Pool()
 	ctx := testContext(t)
 
 	user := createResetTestUser(t, ctx, pool)
-	mailer := &recordingPasswordResetMailer{}
 	publisher := &recordingPasswordResetEventPublisher{}
 
 	issuedAt := time.Now()
-	require.NoError(t, newRequestPasswordReset(pool, mailer, publisher).RequestPasswordReset(ctx, user.Email))
+	require.NoError(t, newRequestPasswordReset(pool, publisher).RequestPasswordReset(ctx, user.Email))
 
-	sent := mailer.only(t)
-	assert.Equal(t, user.Email, sent.toEmail, "the mail must go to the address that was looked up")
-	assert.Equal(t, ctx, sent.ctx, "the caller's context must reach the mailer, so cancellation and tracing carry through")
-
-	rawToken := rawTokenFromLink(t, sent.resetLink)
+	published := publisher.only(t)
+	rawToken := rawTokenFromLink(t, published.ResetURL)
 
 	stored, err := persistence.NewPasswordResetTokenRepository(pool).
 		FindByDigest(ctx, domain.HashPasswordResetToken(rawToken))
-	require.NoError(t, err, "the mailed token must resolve to a persisted row")
+	require.NoError(t, err, "the published token must resolve to a persisted row")
 
 	assert.Equal(t, user.Id, stored.UserID)
 	assert.Nil(t, stored.UsedAt, "a freshly issued token must still be redeemable")
 	assert.WithinDuration(t, issuedAt.Add(passwordResetTokenTTL), stored.ExpiresAt, time.Minute,
 		"the token must expire roughly one TTL from now")
 
-	assert.NotEqual(t, stored.TokenDigest, rawToken, "the raw token must be mailed, never the stored digest")
+	assert.NotEqual(t, stored.TokenDigest, rawToken, "the raw token must be published, never the stored digest")
 	assert.Equal(t, rawToken, url.QueryEscape(rawToken), "the raw token must be URL-safe as issued")
 
 	assert.Equal(t, 1, countPasswordResetTokensForUser(t, ctx, pool, user.Id),
 		"a single request must issue exactly one token")
 
-	requirePasswordResetEventMatches(t, publisher.only(t), user, sent.resetLink)
+	requirePasswordResetEventMatches(t, published, user, published.ResetURL)
 }
 
 func TestRequestPasswordResetInvalidatesThePreviousToken(t *testing.T) {
@@ -221,18 +188,16 @@ func TestRequestPasswordResetInvalidatesThePreviousToken(t *testing.T) {
 	ctx := testContext(t)
 
 	user := createResetTestUser(t, ctx, pool)
-	mailer := &recordingPasswordResetMailer{}
 	publisher := &recordingPasswordResetEventPublisher{}
-	useCase := newRequestPasswordReset(pool, mailer, publisher)
+	useCase := newRequestPasswordReset(pool, publisher)
 
 	require.NoError(t, useCase.RequestPasswordReset(ctx, user.Email))
 	require.NoError(t, useCase.RequestPasswordReset(ctx, user.Email))
 
-	require.Len(t, mailer.sent, 2, "each request must produce its own mail")
 	require.Len(t, publisher.published, 2, "each request must produce its own event")
 
-	firstToken := rawTokenFromLink(t, mailer.sent[0].resetLink)
-	secondToken := rawTokenFromLink(t, mailer.sent[1].resetLink)
+	firstToken := rawTokenFromLink(t, publisher.published[0].ResetURL)
+	secondToken := rawTokenFromLink(t, publisher.published[1].ResetURL)
 	require.NotEqual(t, firstToken, secondToken, "each request must mint a fresh secret")
 
 	tokens := persistence.NewPasswordResetTokenRepository(pool)
@@ -244,34 +209,6 @@ func TestRequestPasswordResetInvalidatesThePreviousToken(t *testing.T) {
 	second, err := tokens.FindByDigest(ctx, domain.HashPasswordResetToken(secondToken))
 	require.NoError(t, err)
 	assert.Nil(t, second.UsedAt, "the token issued last must remain redeemable")
-
-	assert.Equal(t, mailer.sent[0].resetLink, publisher.published[0].ResetURL,
-		"each event must carry the link of the mail it accompanies")
-	assert.Equal(t, mailer.sent[1].resetLink, publisher.published[1].ResetURL,
-		"each event must carry the link of the mail it accompanies")
-}
-
-func TestRequestPasswordResetSucceedsWhenDeliveryFails(t *testing.T) {
-	pgConn := newTestPgConn(t)
-	pool := pgConn.Pool()
-	ctx := testContext(t)
-
-	user := createResetTestUser(t, ctx, pool)
-	mailer := &recordingPasswordResetMailer{sendErr: errors.New("resend: 502 bad gateway")}
-	publisher := &recordingPasswordResetEventPublisher{}
-
-	require.NoError(t, newRequestPasswordReset(pool, mailer, publisher).RequestPasswordReset(ctx, user.Email),
-		"a delivery failure must not fail the request")
-
-	sent := mailer.only(t)
-	rawToken := rawTokenFromLink(t, sent.resetLink)
-
-	stored, err := persistence.NewPasswordResetTokenRepository(pool).
-		FindByDigest(ctx, domain.HashPasswordResetToken(rawToken))
-	require.NoError(t, err, "the token must survive a delivery failure so a retry can still use it")
-	assert.Nil(t, stored.UsedAt)
-
-	requirePasswordResetEventMatches(t, publisher.only(t), user, sent.resetLink)
 }
 
 func TestRequestPasswordResetSucceedsWhenTheEventFailsToPublish(t *testing.T) {
@@ -280,19 +217,18 @@ func TestRequestPasswordResetSucceedsWhenTheEventFailsToPublish(t *testing.T) {
 	ctx := testContext(t)
 
 	user := createResetTestUser(t, ctx, pool)
-	mailer := &recordingPasswordResetMailer{}
 	publisher := &recordingPasswordResetEventPublisher{publishErr: errors.New("kafka: broker unreachable")}
 
-	require.NoError(t, newRequestPasswordReset(pool, mailer, publisher).RequestPasswordReset(ctx, user.Email),
+	require.NoError(t, newRequestPasswordReset(pool, publisher).RequestPasswordReset(ctx, user.Email),
 		"a publish failure must not fail the request")
 
-	sent := mailer.only(t)
-	assert.Equal(t, user.Email, sent.toEmail,
-		"the reset email must still go out when only the event publish fails")
+	published := publisher.only(t)
+	assert.Equal(t, user.Email, published.Email,
+		"the reset event must still be published when only the publish acknowledgement fails")
 
-	requirePasswordResetEventMatches(t, publisher.only(t), user, sent.resetLink)
+	requirePasswordResetEventMatches(t, published, user, published.ResetURL)
 
-	rawToken := rawTokenFromLink(t, sent.resetLink)
+	rawToken := rawTokenFromLink(t, published.ResetURL)
 
 	stored, err := persistence.NewPasswordResetTokenRepository(pool).
 		FindByDigest(ctx, domain.HashPasswordResetToken(rawToken))

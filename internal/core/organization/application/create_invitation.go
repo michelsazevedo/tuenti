@@ -32,7 +32,6 @@ type CreateInvitationUseCase interface {
 type createInvitation struct {
 	uow       *database.UnitOfWork
 	authz     MembershipAuthorizationService
-	mailer    domain.InvitationMailer
 	publisher domain.InvitationEventPublisher
 	baseURL   string
 }
@@ -40,14 +39,12 @@ type createInvitation struct {
 func NewCreateInvitation(
 	uow *database.UnitOfWork,
 	authz MembershipAuthorizationService,
-	mailer domain.InvitationMailer,
 	publisher domain.InvitationEventPublisher,
 	conf *config.Config,
 ) CreateInvitationUseCase {
 	return &createInvitation{
 		uow:       uow,
 		authz:     authz,
-		mailer:    mailer,
 		publisher: publisher,
 		baseURL:   conf.Settings.InvitationBaseURL,
 	}
@@ -122,7 +119,6 @@ func (c *createInvitation) CreateInvitation(
 	}
 
 	c.logInvitationCreated(ctx, invitation)
-	c.sendInvitation(ctx, invitation, organizationName, rawToken)
 	c.publishInvitationCreated(ctx, invitation, organizationName, inviterID, inviterName, rawToken)
 
 	return invitation, nil
@@ -185,19 +181,6 @@ func (c *createInvitation) logInvitationCreated(ctx context.Context, invitation 
 		Msg("Invitation created")
 }
 
-func (c *createInvitation) sendInvitation(
-	ctx context.Context,
-	invitation *domain.Invitation,
-	organizationName, rawToken string,
-) {
-	invitationURL := c.invitationURL(rawToken)
-
-	err := c.mailer.SendInvitation(ctx, invitation.Email, organizationName, string(invitation.Role), invitationURL)
-	if err != nil {
-		c.logInvitationEmailFailure(ctx, invitation, err)
-	}
-}
-
 func (c *createInvitation) publishInvitationCreated(
 	ctx context.Context,
 	invitation *domain.Invitation,
@@ -223,17 +206,6 @@ func (c *createInvitation) publishInvitationCreated(
 
 func (c *createInvitation) invitationURL(rawToken string) string {
 	return c.baseURL + "?token=" + url.QueryEscape(rawToken)
-}
-
-func (c *createInvitation) logInvitationEmailFailure(ctx context.Context, invitation *domain.Invitation, err error) {
-	logger := observability.Logger(ctx)
-
-	logger.Error().
-		Str("event", "invitation_email_send_failed").
-		Str("invitation_id", invitation.Id.String()).
-		Str("organization_id", invitation.OrganizationId.String()).
-		Err(err).
-		Msg("Invitation email delivery failed; the issued invitation remains valid for its TTL")
 }
 
 func (c *createInvitation) logInvitationEventPublishFailure(

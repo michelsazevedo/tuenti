@@ -18,13 +18,11 @@ import (
 
 func newResendConfirmation(
 	pool *pgxpool.Pool,
-	mailer domain.ConfirmationMailer,
 	publisher domain.ConfirmationEventPublisher,
 ) ResendConfirmationUseCase {
 	return NewResendConfirmation(
 		persistence.NewUserRepository(pool),
 		persistence.NewEmailConfirmationTokenRepository(pool),
-		mailer,
 		publisher,
 		&config.Config{Settings: config.Settings{EmailConfirmationBaseURL: signupConfirmBaseURL}},
 	)
@@ -96,16 +94,14 @@ func TestResendConfirmationIsSilentForAnUnknownEmail(t *testing.T) {
 	pool := pgConn.Pool()
 	ctx := testContext(t)
 
-	mailer := &recordingConfirmationMailer{}
 	publisher := &recordingConfirmationEventPublisher{}
 	tokensBefore := countEmailConfirmationTokens(t, ctx, pool)
 
-	err := newResendConfirmation(pool, mailer, publisher).
+	err := newResendConfirmation(pool, publisher).
 		ResendConfirmation(ctx, "nobody."+randomSuffix(t)+"@example.com")
 
 	require.NoError(t, err, "an unknown address must not be distinguishable from a known one")
 
-	assert.Empty(t, mailer.sent, "no mail may be sent for an address with no user")
 	assert.Empty(t, publisher.published, "no event may be published for an address with no user")
 	assert.Equal(t, tokensBefore, countEmailConfirmationTokens(t, ctx, pool),
 		"no token may be issued for an address with no user")
@@ -119,14 +115,12 @@ func TestResendConfirmationIsSilentForAnAlreadyConfirmedUser(t *testing.T) {
 	user := createUnconfirmedTestUser(t, ctx, pool)
 	require.NoError(t, persistence.NewUserRepository(pool).MarkConfirmed(ctx, user.Id, time.Now().UTC()))
 
-	mailer := &recordingConfirmationMailer{}
 	publisher := &recordingConfirmationEventPublisher{}
 	tokensBefore := countEmailConfirmationTokens(t, ctx, pool)
 
-	require.NoError(t, newResendConfirmation(pool, mailer, publisher).ResendConfirmation(ctx, user.Email),
+	require.NoError(t, newResendConfirmation(pool, publisher).ResendConfirmation(ctx, user.Email),
 		"an already confirmed account must return the same nil as a real send")
 
-	assert.Empty(t, mailer.sent, "a confirmed account has nothing to confirm, so no mail may go out")
 	assert.Empty(t, publisher.published, "a confirmed account has nothing to confirm, so no event may go out")
 	assert.Zero(t, countEmailConfirmationTokensForUser(t, ctx, pool, user.Id),
 		"no token may be minted for an account that is already confirmed")
@@ -134,7 +128,7 @@ func TestResendConfirmationIsSilentForAnAlreadyConfirmedUser(t *testing.T) {
 		"the already confirmed path must leave the token table untouched")
 }
 
-func TestResendConfirmationSupersedesTheActiveTokenAndMailsTheNewSecret(t *testing.T) {
+func TestResendConfirmationSupersedesTheActiveTokenAndPublishesTheNewSecret(t *testing.T) {
 	pgConn := newTestPgConn(t)
 	pool := pgConn.Pool()
 	ctx := testContext(t)
@@ -142,17 +136,13 @@ func TestResendConfirmationSupersedesTheActiveTokenAndMailsTheNewSecret(t *testi
 	user := createUnconfirmedTestUser(t, ctx, pool)
 	previousToken := issueConfirmationToken(t, ctx, pool, user.Id)
 
-	mailer := &recordingConfirmationMailer{}
 	publisher := &recordingConfirmationEventPublisher{}
 	issuedAt := time.Now()
 
-	require.NoError(t, newResendConfirmation(pool, mailer, publisher).ResendConfirmation(ctx, user.Email))
+	require.NoError(t, newResendConfirmation(pool, publisher).ResendConfirmation(ctx, user.Email))
 
-	sent := mailer.only(t)
-	assert.Equal(t, user.Email, sent.toEmail, "the mail must go to the address that was looked up")
-	assert.Equal(t, ctx, sent.ctx, "the caller's context must reach the mailer, so cancellation and tracing carry through")
-
-	rawToken := rawTokenFromConfirmationURL(t, sent.confirmationURL)
+	published := publisher.only(t)
+	rawToken := rawTokenFromConfirmationURL(t, published.ConfirmationURL)
 	require.NotEqual(t, previousToken, rawToken, "the resend must mint a fresh secret")
 
 	tokens := persistence.NewEmailConfirmationTokenRepository(pool)
@@ -162,7 +152,7 @@ func TestResendConfirmationSupersedesTheActiveTokenAndMailsTheNewSecret(t *testi
 	assert.NotNil(t, previous.UsedAt, "the previously active token must have been burned by the resend")
 
 	stored, err := tokens.FindByDigest(ctx, domain.HashEmailConfirmationToken(rawToken))
-	require.NoError(t, err, "the mailed token must resolve to a persisted row")
+	require.NoError(t, err, "the published token must resolve to a persisted row")
 
 	assert.Equal(t, user.Id, stored.UserID)
 	assert.Nil(t, stored.UsedAt, "the freshly issued token must still be redeemable")
@@ -170,7 +160,7 @@ func TestResendConfirmationSupersedesTheActiveTokenAndMailsTheNewSecret(t *testi
 	assert.WithinDuration(t, issuedAt.Add(emailConfirmationTokenTTL), stored.ExpiresAt, time.Minute,
 		"the token must expire roughly one TTL from now")
 
-	assert.NotEqual(t, stored.TokenDigest, rawToken, "the raw token must be mailed, never the stored digest")
+	assert.NotEqual(t, stored.TokenDigest, rawToken, "the raw token must be published, never the stored digest")
 
 	assert.Equal(t, 2, countEmailConfirmationTokensForUser(t, ctx, pool, user.Id),
 		"the resend must add exactly one row on top of the seeded one")
@@ -181,30 +171,7 @@ func TestResendConfirmationSupersedesTheActiveTokenAndMailsTheNewSecret(t *testi
 		user.Id).Scan(&live))
 	assert.Equal(t, 1, live, "exactly one confirmation token may be live for the user after a resend")
 
-	requireConfirmationEventMatches(t, publisher.only(t), user, sent.confirmationURL)
-}
-
-func TestResendConfirmationSucceedsWhenDeliveryFails(t *testing.T) {
-	pgConn := newTestPgConn(t)
-	pool := pgConn.Pool()
-	ctx := testContext(t)
-
-	user := createUnconfirmedTestUser(t, ctx, pool)
-	mailer := &recordingConfirmationMailer{sendErr: errors.New("resend: 502 bad gateway")}
-	publisher := &recordingConfirmationEventPublisher{}
-
-	require.NoError(t, newResendConfirmation(pool, mailer, publisher).ResendConfirmation(ctx, user.Email),
-		"a delivery failure must not fail the request")
-
-	sent := mailer.only(t)
-	rawToken := rawTokenFromConfirmationURL(t, sent.confirmationURL)
-
-	stored, err := persistence.NewEmailConfirmationTokenRepository(pool).
-		FindByDigest(ctx, domain.HashEmailConfirmationToken(rawToken))
-	require.NoError(t, err, "the token must survive a delivery failure so a retry can still use it")
-	assert.Nil(t, stored.UsedAt)
-
-	requireConfirmationEventMatches(t, publisher.only(t), user, sent.confirmationURL)
+	requireConfirmationEventMatches(t, published, user, published.ConfirmationURL)
 }
 
 func TestResendConfirmationSucceedsWhenTheEventFailsToPublish(t *testing.T) {
@@ -213,19 +180,18 @@ func TestResendConfirmationSucceedsWhenTheEventFailsToPublish(t *testing.T) {
 	ctx := testContext(t)
 
 	user := createUnconfirmedTestUser(t, ctx, pool)
-	mailer := &recordingConfirmationMailer{}
 	publisher := &recordingConfirmationEventPublisher{publishErr: errors.New("kafka: broker unreachable")}
 
-	require.NoError(t, newResendConfirmation(pool, mailer, publisher).ResendConfirmation(ctx, user.Email),
+	require.NoError(t, newResendConfirmation(pool, publisher).ResendConfirmation(ctx, user.Email),
 		"a publish failure must not fail the request")
 
-	sent := mailer.only(t)
-	assert.Equal(t, user.Email, sent.toEmail,
-		"the confirmation email must still go out when only the event publish fails")
+	published := publisher.only(t)
+	assert.Equal(t, user.Email, published.Email,
+		"the confirmation event must still be published when only the publish acknowledgement fails")
 
-	requireConfirmationEventMatches(t, publisher.only(t), user, sent.confirmationURL)
+	requireConfirmationEventMatches(t, published, user, published.ConfirmationURL)
 
-	rawToken := rawTokenFromConfirmationURL(t, sent.confirmationURL)
+	rawToken := rawTokenFromConfirmationURL(t, published.ConfirmationURL)
 
 	stored, err := persistence.NewEmailConfirmationTokenRepository(pool).
 		FindByDigest(ctx, domain.HashEmailConfirmationToken(rawToken))

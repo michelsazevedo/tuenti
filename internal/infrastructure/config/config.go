@@ -40,12 +40,6 @@ type Redis struct {
 	DB       int    `yaml:"db"`
 }
 
-// Resend ...
-type Resend struct {
-	APIKey    string `yaml:"api_key" validate:"required"`
-	FromEmail string `yaml:"from_email" validate:"required,email"`
-}
-
 // Server ...
 type Server struct {
 	Port string `yaml:"port"`
@@ -69,7 +63,6 @@ type Config struct {
 	Kafka         Kafka         `yaml:"kafka" validate:"required"`
 	Observability Observability `yaml:"observability"`
 	Redis         Redis         `yaml:"redis"`
-	Resend        Resend        `yaml:"resend" validate:"required"`
 	Settings      Settings      `yaml:"settings" validate:"required"`
 }
 

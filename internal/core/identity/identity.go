@@ -9,6 +9,7 @@ import (
 	"github.com/michelsazevedo/tuenti/internal/core/identity/domain"
 	"github.com/michelsazevedo/tuenti/internal/core/identity/persistence"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
+	"github.com/michelsazevedo/tuenti/internal/infrastructure/kafka"
 )
 
 func Identity() fx.Option {
@@ -26,6 +27,12 @@ func Identity() fx.Option {
 			},
 			func(pg *database.PgConn) domain.EmailConfirmationTokenRepository {
 				return persistence.NewEmailConfirmationTokenRepository(pg.Pool())
+			},
+			func(producer *kafka.Producer) domain.ConfirmationEventPublisher {
+				return persistence.NewEventPublisher(producer)
+			},
+			func(producer *kafka.Producer) domain.PasswordResetEventPublisher {
+				return persistence.NewEventPublisher(producer)
 			},
 			application.NewSignup,
 			application.NewSignin,

@@ -35,9 +35,6 @@ export POSTGRES_HOST=
 export REDIS_HOST=
 export REDIS_PASSWORD=
 
-export RESEND_API_KEY=
-export RESEND_FROM_EMAIL=
-
 export PASSWORD_RESET_BASE_URL=
 export EMAIL_CONFIRMATION_BASE_URL=
 export INVITATION_BASE_URL=
@@ -75,7 +72,7 @@ go run ./cmd/jobs
 
 It must run from the repository root, because pending migrations are applied on boot from `./db/migrations` — the same way the API server does it.
 
-It needs the **same environment variables as the main server** (the full list is under [Running with Make](#running-with-make)). That includes `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `PASSWORD_RESET_BASE_URL`, `EMAIL_CONFIRMATION_BASE_URL`, and `INVITATION_BASE_URL`, even though the job never sends email: configuration is validated as a whole rather than per binary, so it refuses to start when they are missing.
+It needs the **same environment variables as the main server** (the full list is under [Running with Make](#running-with-make)). That includes `PASSWORD_RESET_BASE_URL`, `EMAIL_CONFIRMATION_BASE_URL`, and `INVITATION_BASE_URL`, even though the job never sends email: configuration is validated as a whole rather than per binary, so it refuses to start when they are missing.
 
 Exit codes:
 
@@ -87,6 +84,29 @@ Exit codes:
 Each run logs a structured summary (`found` / `suspended` / `failed`, plus the job outcome and duration) before exiting.
 
 The daily cadence lives outside this repository: point an external scheduler — a Kubernetes `CronJob`, a cloud scheduler, or plain `cron` — at the command once a day and alert on a non-zero exit code. No deployment manifest is included here, as that is a deployment-environment concern.
+
+### Database Seeds
+
+`cmd/seed` populates reference data — data that the application depends on but that shouldn't be created through manual `INSERT` statements, such as the list of Industries. It's a one-shot command: it runs every registered seed once, in order, and exits. Seeds are idempotent (they `UPSERT` by a unique key), so running the command any number of times — in local, staging, or production — never creates duplicates.
+
+Run it manually from the repository root:
+
+```ssh
+go run cmd/seed/main.go
+```
+
+It must run from the repository root, for the same reason as `cmd/jobs`: pending migrations are applied on boot from `./db/migrations`, and it needs the **same environment variables as the main server** (see [Running with Make](#running-with-make)).
+
+Exit codes:
+
+| Code | Meaning |
+| ---- | ------- |
+| `0`  | Every registered seed completed successfully |
+| `1`  | The runner could not boot, or a seed failed (remaining seeds are skipped) |
+
+Each seed logs its own start/success/failure with a duration, plus a final summary once all seeds have run.
+
+**Adding a new seed:** implement the `Seed` interface (`Run(ctx context.Context) error`) in a new file under `cmd/seed/seeds/`, then register an instance of it in the `registry` slice in `cmd/seed/main.go`. See `cmd/seed/seeds/industries.go` for a working example — its `industryNames` list is the single source of truth for that seed's data, so adding an industry is just adding a string there and re-running the command.
 
 
 ## License
