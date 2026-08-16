@@ -24,13 +24,24 @@ type SignupUseCase interface {
 }
 
 type signup struct {
-	uow     *database.UnitOfWork
-	mailer  domain.ConfirmationMailer
-	baseURL string
+	uow       *database.UnitOfWork
+	mailer    domain.ConfirmationMailer
+	publisher domain.ConfirmationEventPublisher
+	baseURL   string
 }
 
-func NewSignup(uow *database.UnitOfWork, mailer domain.ConfirmationMailer, conf *config.Config) SignupUseCase {
-	return &signup{uow: uow, mailer: mailer, baseURL: conf.Settings.EmailConfirmationBaseURL}
+func NewSignup(
+	uow *database.UnitOfWork,
+	mailer domain.ConfirmationMailer,
+	publisher domain.ConfirmationEventPublisher,
+	conf *config.Config,
+) SignupUseCase {
+	return &signup{
+		uow:       uow,
+		mailer:    mailer,
+		publisher: publisher,
+		baseURL:   conf.Settings.EmailConfirmationBaseURL,
+	}
 }
 
 func (s *signup) SignUp(ctx context.Context, user *domain.User, organizationName string) error {
@@ -85,6 +96,11 @@ func (s *signup) SignUp(ctx context.Context, user *domain.User, organizationName
 		logConfirmationEmailFailure(ctx, user, err)
 	}
 
+	event := domain.NewEmailConfirmationRequested(user.Id.String(), user.Name, user.Email, confirmationURL)
+	if err := s.publisher.PublishEmailConfirmationRequested(ctx, event); err != nil {
+		logConfirmationEventPublishFailure(ctx, user, err)
+	}
+
 	return nil
 }
 
@@ -97,4 +113,15 @@ func logConfirmationEmailFailure(ctx context.Context, user *domain.User, err err
 		Str("email", user.Email).
 		Err(err).
 		Msg("Confirmation email delivery failed; the issued token remains valid for its TTL")
+}
+
+func logConfirmationEventPublishFailure(ctx context.Context, user *domain.User, err error) {
+	logger := observability.Logger(ctx)
+
+	logger.Warn().
+		Str("event", "email_confirmation_event_publish_failed").
+		Str("user_id", user.Id.String()).
+		Str("email", user.Email).
+		Err(err).
+		Msg("Email confirmation event publish failed; the confirmation email and the issued token are unaffected")
 }

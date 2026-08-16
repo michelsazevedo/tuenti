@@ -11,6 +11,7 @@ services:
     depends_on:
       - db
       - jaeger
+      - kafka
       - redis
     stdin_open: true
     tty: true
@@ -23,6 +24,7 @@ services:
       - OTLP_ENDPOINT=jaeger:4318
       - REDIS_HOST=redis:6379
       - REDIS_PASSWORD=
+      - KAFKA_BROKERS=kafka:9092
       - RESEND_API_KEY=test-key
       - RESEND_FROM_EMAIL=test@example.com
       - PASSWORD_RESET_BASE_URL=http://localhost:3000/reset-password
@@ -57,6 +59,32 @@ services:
       - "4318:4318"
     environment:
       - COLLECTOR_OTLP_ENABLED=true
+
+  kafka:
+    image: apache/kafka:3.8.0
+    restart: unless-stopped
+    container_name: kafka
+    hostname: kafka
+    ports:
+      # Host-side dev connects on localhost:9092 (PLAINTEXT_HOST listener);
+      # containers on the compose network use kafka:9092 (PLAINTEXT listener).
+      - "9092:29092"
+    environment:
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:29093
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      - KAFKA_LISTENERS=CONTROLLER://:29093,PLAINTEXT://:9092,PLAINTEXT_HOST://:29092
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092
+      - KAFKA_LOG_DIRS=/tmp/kraft-combined-logs
+      - CLUSTER_ID=4L6g3nShT-eMCtK--X86sw
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
 
   redis:
     image: redis:7-alpine

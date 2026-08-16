@@ -6,6 +6,7 @@ import (
 	"github.com/michelsazevedo/tuenti/internal/http"
 	"github.com/michelsazevedo/tuenti/internal/http/logging"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
+	"github.com/michelsazevedo/tuenti/internal/infrastructure/kafka"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/observability"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/redis"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/resend"
@@ -19,6 +20,7 @@ func main() {
 		database.Db(),
 		redis.Redis(),
 		resend.Resend(),
+		kafka.Kafka(),
 		observability.Telemetry(),
 		identity.Identity(),
 		organization.Organization(),

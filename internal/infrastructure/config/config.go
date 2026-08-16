@@ -23,6 +23,11 @@ type Database struct {
 	SSLMode  string        `yaml:"ssl_mode" validate:"oneof=disable require verify-ca verify-full"`
 }
 
+// Kafka ...
+type Kafka struct {
+	Brokers string `yaml:"brokers" validate:"required"`
+}
+
 // Observability ...
 type Observability struct {
 	OTLPEndpoint string `yaml:"otlp_endpoint" validate:"omitempty,url"`
@@ -61,6 +66,7 @@ type Settings struct {
 // Config ...
 type Config struct {
 	Database      Database      `yaml:"database" validate:"required"`
+	Kafka         Kafka         `yaml:"kafka" validate:"required"`
 	Observability Observability `yaml:"observability"`
 	Redis         Redis         `yaml:"redis"`
 	Resend        Resend        `yaml:"resend" validate:"required"`
@@ -111,6 +117,10 @@ func (c *Config) GetRedisAddr() string {
 	return c.Redis.Host
 }
 
+func (c *Config) GetKafkaBrokers() []string {
+	return strings.Split(c.Kafka.Brokers, ",")
+}
+
 func (c *Config) withDefaults() *Config {
 	if c.Database.Host == "" {
 		c.Database.Host = "localhost:5432"
@@ -118,6 +128,10 @@ func (c *Config) withDefaults() *Config {
 
 	if c.Redis.Host == "" {
 		c.Redis.Host = "localhost:6379"
+	}
+
+	if c.Kafka.Brokers == "" {
+		c.Kafka.Brokers = "localhost:9092"
 	}
 
 	if c.Database.Timeout == 0 {

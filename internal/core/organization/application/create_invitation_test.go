@@ -65,14 +65,43 @@ func (m *createInvitationRecordingMailer) only(t *testing.T) createInvitationSen
 	return m.sent[0]
 }
 
+type createInvitationPublishedEvent struct {
+	ctx   context.Context
+	event domain.OrganizationInvitationCreated
+}
+
+type createInvitationRecordingPublisher struct {
+	publishErr error
+	published  []createInvitationPublishedEvent
+}
+
+func (p *createInvitationRecordingPublisher) PublishOrganizationInvitationCreated(
+	ctx context.Context,
+	event domain.OrganizationInvitationCreated,
+) error {
+	p.published = append(p.published, createInvitationPublishedEvent{ctx: ctx, event: event})
+
+	return p.publishErr
+}
+
+func (p *createInvitationRecordingPublisher) only(t *testing.T) domain.OrganizationInvitationCreated {
+	t.Helper()
+
+	require.Len(t, p.published, 1, "exactly one invitation event must have been published")
+
+	return p.published[0].event
+}
+
 func newCreateInvitationUseCase(
 	pgConn *database.PgConn,
 	mailer domain.InvitationMailer,
+	publisher domain.InvitationEventPublisher,
 ) CreateInvitationUseCase {
 	return NewCreateInvitation(
 		database.NewUnitOfWork(pgConn),
 		NewMembershipAuthorizationService(repository.NewMembershipRepository(pgConn.Pool())),
 		mailer,
+		publisher,
 		&config.Config{Settings: config.Settings{InvitationBaseURL: createInvitationBaseURL}},
 	)
 }
@@ -80,6 +109,7 @@ func newCreateInvitationUseCase(
 type createInvitationMember struct {
 	userID       pgtype.UUID
 	membershipID pgtype.UUID
+	name         string
 	email        string
 }
 
@@ -121,9 +151,19 @@ func newCreateInvitationFixture(t *testing.T, pgConn *database.PgConn, inviterRo
 func (f *createInvitationFixture) addMember(t *testing.T, email string, role domain.Role) createInvitationMember {
 	t.Helper()
 
+	return f.addNamedMember(t, "Seeded "+f.suffix, email, role)
+}
+
+func (f *createInvitationFixture) addNamedMember(
+	t *testing.T,
+	name, email string,
+	role domain.Role,
+) createInvitationMember {
+	t.Helper()
+
 	ctx := createInvitationTestContext(t)
 
-	user := &identitydomain.User{Name: "Seeded " + f.suffix, Email: email, PasswordDigest: "seeded-digest"}
+	user := &identitydomain.User{Name: name, Email: email, PasswordDigest: "seeded-digest"}
 	require.NoError(t, identitypersistence.NewUserRepository(f.pool).Create(ctx, user), "seeding the user must succeed")
 
 	f.userIDs = append(f.userIDs, user.Id)
@@ -132,7 +172,7 @@ func (f *createInvitationFixture) addMember(t *testing.T, email string, role dom
 	require.NoError(t, repository.NewMembershipRepository(f.pool).Create(ctx, membership),
 		"seeding the membership must succeed")
 
-	return createInvitationMember{userID: user.Id, membershipID: membership.Id, email: email}
+	return createInvitationMember{userID: user.Id, membershipID: membership.Id, name: name, email: email}
 }
 
 func (f *createInvitationFixture) inviteeEmail(local string) string {
@@ -284,9 +324,10 @@ func TestCreateInvitationByAManagerPersistsTheInvitationAndSendsTheEmail(t *test
 
 			fixture := newCreateInvitationFixture(t, pgConn, domain.RoleManager)
 			mailer := &createInvitationRecordingMailer{}
+			publisher := &createInvitationRecordingPublisher{}
 			email := fixture.inviteeEmail("invitee")
 
-			invitation, err := newCreateInvitationUseCase(pgConn, mailer).
+			invitation, err := newCreateInvitationUseCase(pgConn, mailer, publisher).
 				CreateInvitation(ctx, fixture.inviter.userID, fixture.organizationID, email, role)
 
 			require.NoError(t, err, "a manager may invite any role")
@@ -315,6 +356,20 @@ func TestCreateInvitationByAManagerPersistsTheInvitationAndSendsTheEmail(t *test
 			assert.NotEqual(t, rawToken, row.tokenDigest, "the raw token must never be stored")
 			assert.Equal(t, domain.HashInvitationToken(rawToken), row.tokenDigest,
 				"the emailed token must hash to the stored digest")
+
+			event := publisher.only(t)
+			assert.Equal(t, domain.EventOrganizationInvitationCreated, event.Event)
+			assert.NotEmpty(t, event.EventID, "every event must carry an identifier for deduplication")
+			assert.Equal(t, invitation.Id.String(), event.InvitationID)
+			assert.Equal(t, fixture.organizationID.String(), event.OrganizationID)
+			assert.Equal(t, fixture.organizationName, event.OrganizationName)
+			assert.Equal(t, fixture.inviter.userID.String(), event.InviterUserID)
+			assert.Equal(t, fixture.inviter.name, event.InviterName,
+				"the event must carry the inviter name looked up from the authorizing membership")
+			assert.Equal(t, email, event.InviteeEmail)
+			assert.Equal(t, string(role), event.Role)
+			assert.Equal(t, sent.invitationURL, event.InviteURL,
+				"the event must carry the same link the email delivered")
 		})
 	}
 }
@@ -337,9 +392,10 @@ func TestCreateInvitationByAnAdminIsLimitedToAdminsAndMembers(t *testing.T) {
 
 			fixture := newCreateInvitationFixture(t, pgConn, domain.RoleAdmin)
 			mailer := &createInvitationRecordingMailer{}
+			publisher := &createInvitationRecordingPublisher{}
 			email := fixture.inviteeEmail("invitee")
 
-			invitation, err := newCreateInvitationUseCase(pgConn, mailer).
+			invitation, err := newCreateInvitationUseCase(pgConn, mailer, publisher).
 				CreateInvitation(ctx, fixture.inviter.userID, fixture.organizationID, email, tt.role)
 
 			if tt.wantErr != nil {
@@ -347,6 +403,7 @@ func TestCreateInvitationByAnAdminIsLimitedToAdminsAndMembers(t *testing.T) {
 				assert.Nil(t, invitation)
 				assert.Zero(t, fixture.countInvitations(t, email), "a forbidden invitation must not be persisted")
 				assert.Empty(t, mailer.sent, "a forbidden invitation must never be emailed")
+				assert.Empty(t, publisher.published, "a forbidden invitation must never be published")
 
 				return
 			}
@@ -355,6 +412,7 @@ func TestCreateInvitationByAnAdminIsLimitedToAdminsAndMembers(t *testing.T) {
 			require.NotNil(t, invitation)
 			assert.Equal(t, 1, fixture.countInvitations(t, email))
 			assert.Equal(t, string(tt.role), mailer.only(t).role)
+			assert.Equal(t, string(tt.role), publisher.only(t).Role)
 		})
 	}
 }
@@ -367,15 +425,17 @@ func TestCreateInvitationByAMemberIsForbidden(t *testing.T) {
 
 			fixture := newCreateInvitationFixture(t, pgConn, domain.RoleMember)
 			mailer := &createInvitationRecordingMailer{}
+			publisher := &createInvitationRecordingPublisher{}
 			email := fixture.inviteeEmail("invitee")
 
-			invitation, err := newCreateInvitationUseCase(pgConn, mailer).
+			invitation, err := newCreateInvitationUseCase(pgConn, mailer, publisher).
 				CreateInvitation(ctx, fixture.inviter.userID, fixture.organizationID, email, role)
 
 			require.ErrorIs(t, err, domain.ErrInvitationForbidden, "a member may not invite anyone")
 			assert.Nil(t, invitation)
 			assert.Zero(t, fixture.countInvitations(t, email), "a forbidden invitation must not be persisted")
 			assert.Empty(t, mailer.sent, "a forbidden invitation must never be emailed")
+			assert.Empty(t, publisher.published, "a forbidden invitation must never be published")
 		})
 	}
 }
@@ -388,14 +448,16 @@ func TestCreateInvitationForAnExistingMemberIsRejected(t *testing.T) {
 	existing := fixture.addMember(t, fixture.inviteeEmail("existing"), domain.RoleMember)
 
 	mailer := &createInvitationRecordingMailer{}
+	publisher := &createInvitationRecordingPublisher{}
 
-	invitation, err := newCreateInvitationUseCase(pgConn, mailer).
+	invitation, err := newCreateInvitationUseCase(pgConn, mailer, publisher).
 		CreateInvitation(ctx, fixture.inviter.userID, fixture.organizationID, existing.email, domain.RoleAdmin)
 
 	require.ErrorIs(t, err, domain.ErrAlreadyMember, "an existing member cannot be invited again")
 	assert.Nil(t, invitation)
 	assert.Zero(t, fixture.countInvitations(t, existing.email), "no invitation row may survive the rollback")
 	assert.Empty(t, mailer.sent, "a rejected invitation must never be emailed")
+	assert.Empty(t, publisher.published, "a rejected invitation must never be published")
 }
 
 func TestCreateInvitationWithAPendingInvitationIsRejected(t *testing.T) {
@@ -403,7 +465,8 @@ func TestCreateInvitationWithAPendingInvitationIsRejected(t *testing.T) {
 	ctx := createInvitationTestContext(t)
 
 	fixture := newCreateInvitationFixture(t, pgConn, domain.RoleManager)
-	useCase := newCreateInvitationUseCase(pgConn, &createInvitationRecordingMailer{})
+	useCase := newCreateInvitationUseCase(pgConn,
+		&createInvitationRecordingMailer{}, &createInvitationRecordingPublisher{})
 	email := fixture.inviteeEmail("invitee")
 
 	first, err := useCase.CreateInvitation(ctx, fixture.inviter.userID, fixture.organizationID, email, domain.RoleMember)
@@ -411,14 +474,16 @@ func TestCreateInvitationWithAPendingInvitationIsRejected(t *testing.T) {
 	require.NotNil(t, first)
 
 	mailer := &createInvitationRecordingMailer{}
+	publisher := &createInvitationRecordingPublisher{}
 
-	second, err := newCreateInvitationUseCase(pgConn, mailer).
+	second, err := newCreateInvitationUseCase(pgConn, mailer, publisher).
 		CreateInvitation(ctx, fixture.inviter.userID, fixture.organizationID, email, domain.RoleAdmin)
 
 	require.ErrorIs(t, err, domain.ErrDuplicateInvitation, "one live invitation per address and organization")
 	assert.Nil(t, second)
 	assert.Equal(t, 1, fixture.countInvitations(t, email), "the duplicate must not add a second row")
 	assert.Empty(t, mailer.sent, "a duplicate invitation must never be emailed")
+	assert.Empty(t, publisher.published, "a duplicate invitation must never be published")
 }
 
 func TestCreateInvitationSucceedsEvenWhenTheEmailFailsToSend(t *testing.T) {
@@ -427,9 +492,10 @@ func TestCreateInvitationSucceedsEvenWhenTheEmailFailsToSend(t *testing.T) {
 
 	fixture := newCreateInvitationFixture(t, pgConn, domain.RoleManager)
 	mailer := &createInvitationRecordingMailer{sendErr: errors.New("resend unavailable")}
+	publisher := &createInvitationRecordingPublisher{}
 	email := fixture.inviteeEmail("invitee")
 
-	invitation, err := newCreateInvitationUseCase(pgConn, mailer).
+	invitation, err := newCreateInvitationUseCase(pgConn, mailer, publisher).
 		CreateInvitation(ctx, fixture.inviter.userID, fixture.organizationID, email, domain.RoleMember)
 
 	require.NoError(t, err, "a failing mailer must not fail the invitation")
@@ -440,6 +506,57 @@ func TestCreateInvitationSucceedsEvenWhenTheEmailFailsToSend(t *testing.T) {
 
 	sent := mailer.only(t)
 	assert.Equal(t, email, sent.email, "the delivery must have been attempted before it failed")
+
+	assert.Equal(t, email, publisher.only(t).InviteeEmail,
+		"a failed email must not stop the event from being published")
+}
+
+func TestCreateInvitationSucceedsEvenWhenTheEventFailsToPublish(t *testing.T) {
+	pgConn := newCreateInvitationTestPgConn(t)
+	ctx := createInvitationTestContext(t)
+
+	fixture := newCreateInvitationFixture(t, pgConn, domain.RoleManager)
+	mailer := &createInvitationRecordingMailer{}
+	publisher := &createInvitationRecordingPublisher{publishErr: errors.New("kafka unavailable")}
+	email := fixture.inviteeEmail("invitee")
+
+	invitation, err := newCreateInvitationUseCase(pgConn, mailer, publisher).
+		CreateInvitation(ctx, fixture.inviter.userID, fixture.organizationID, email, domain.RoleMember)
+
+	require.NoError(t, err, "a failing publisher must not fail the invitation")
+	require.NotNil(t, invitation)
+
+	row := fixture.requireInvitationRow(t, invitation.Id)
+	assert.Equal(t, email, row.email, "the invitation must survive a failed publish")
+
+	assert.Equal(t, email, publisher.only(t).InviteeEmail, "the publish must have been attempted before it failed")
+	assert.Equal(t, email, mailer.only(t).email, "a failed publish must not stop the email from being sent")
+}
+
+func TestCreateInvitationPublishesTheInviterNameLookedUpFromTheMembership(t *testing.T) {
+	pgConn := newCreateInvitationTestPgConn(t)
+	ctx := createInvitationTestContext(t)
+
+	fixture := newCreateInvitationFixture(t, pgConn, domain.RoleManager)
+	inviter := fixture.addNamedMember(t, "Grace Hopper", fixture.inviteeEmail("grace"), domain.RoleManager)
+
+	mailer := &createInvitationRecordingMailer{}
+	publisher := &createInvitationRecordingPublisher{}
+	email := fixture.inviteeEmail("invitee")
+
+	invitation, err := newCreateInvitationUseCase(pgConn, mailer, publisher).
+		CreateInvitation(ctx, inviter.userID, fixture.organizationID, email, domain.RoleMember)
+
+	require.NoError(t, err)
+	require.NotNil(t, invitation)
+
+	event := publisher.only(t)
+	assert.Equal(t, "Grace Hopper", event.InviterName,
+		"the event must name the inviting user, not the seeded fixture default")
+	assert.Equal(t, inviter.userID.String(), event.InviterUserID,
+		"the event must identify the inviting user behind the authorizing membership")
+	assert.NotEqual(t, fixture.inviter.name, event.InviterName,
+		"the lookup must resolve the acting membership, not any member of the organization")
 }
 
 func TestCreateInvitationByANonMemberPropagatesTheMembershipError(t *testing.T) {
@@ -450,9 +567,10 @@ func TestCreateInvitationByANonMemberPropagatesTheMembershipError(t *testing.T) 
 	outsider := newCreateInvitationFixture(t, pgConn, domain.RoleManager)
 
 	mailer := &createInvitationRecordingMailer{}
+	publisher := &createInvitationRecordingPublisher{}
 	email := fixture.inviteeEmail("invitee")
 
-	invitation, err := newCreateInvitationUseCase(pgConn, mailer).
+	invitation, err := newCreateInvitationUseCase(pgConn, mailer, publisher).
 		CreateInvitation(ctx, outsider.inviter.userID, fixture.organizationID, email, domain.RoleMember)
 
 	require.ErrorIs(t, err, domain.ErrMembershipNotFound,
@@ -460,4 +578,5 @@ func TestCreateInvitationByANonMemberPropagatesTheMembershipError(t *testing.T) 
 	assert.Nil(t, invitation)
 	assert.Zero(t, fixture.countInvitations(t, email))
 	assert.Empty(t, mailer.sent)
+	assert.Empty(t, publisher.published)
 }
