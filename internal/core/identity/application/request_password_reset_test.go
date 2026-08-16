@@ -44,11 +44,54 @@ func (m *recordingPasswordResetMailer) only(t *testing.T) sentPasswordResetEmail
 	return m.sent[0]
 }
 
-func newRequestPasswordReset(pool *pgxpool.Pool, mailer domain.PasswordResetMailer) RequestPasswordResetUseCase {
+type recordingPasswordResetEventPublisher struct {
+	publishErr error
+	published  []domain.PasswordResetRequested
+}
+
+func (p *recordingPasswordResetEventPublisher) PublishPasswordResetRequested(
+	_ context.Context,
+	event domain.PasswordResetRequested,
+) error {
+	p.published = append(p.published, event)
+
+	return p.publishErr
+}
+
+func (p *recordingPasswordResetEventPublisher) only(t *testing.T) domain.PasswordResetRequested {
+	t.Helper()
+
+	require.Len(t, p.published, 1, "exactly one password reset event must have been published")
+
+	return p.published[0]
+}
+
+func requirePasswordResetEventMatches(
+	t *testing.T,
+	published domain.PasswordResetRequested,
+	user *domain.User,
+	resetLink string,
+) {
+	t.Helper()
+
+	assert.Equal(t, domain.EventPasswordResetRequested, published.Event,
+		"the envelope must carry the password reset event name")
+	assert.Equal(t, user.Id.String(), published.UserID, "the event must identify the user resetting the password")
+	assert.Equal(t, user.Name, published.Name, "the event must carry the name the notification will greet")
+	assert.Equal(t, user.Email, published.Email, "the event must carry the address that was looked up")
+	assert.Equal(t, resetLink, published.ResetURL, "the event must carry the same link that was emailed")
+}
+
+func newRequestPasswordReset(
+	pool *pgxpool.Pool,
+	mailer domain.PasswordResetMailer,
+	publisher domain.PasswordResetEventPublisher,
+) RequestPasswordResetUseCase {
 	return NewRequestPasswordReset(
 		persistence.NewUserRepository(pool),
 		persistence.NewPasswordResetTokenRepository(pool),
 		mailer,
+		publisher,
 		&config.Config{Settings: config.Settings{PasswordResetBaseURL: requestResetBaseURL}},
 	)
 }
@@ -122,14 +165,16 @@ func TestRequestPasswordResetIsSilentForAnUnknownEmail(t *testing.T) {
 	ctx := testContext(t)
 
 	mailer := &recordingPasswordResetMailer{}
+	publisher := &recordingPasswordResetEventPublisher{}
 	tokensBefore := countPasswordResetTokens(t, ctx, pool)
 
-	err := newRequestPasswordReset(pool, mailer).
+	err := newRequestPasswordReset(pool, mailer, publisher).
 		RequestPasswordReset(ctx, "nobody."+randomSuffix(t)+"@example.com")
 
 	require.NoError(t, err, "an unknown address must not be distinguishable from a known one")
 
 	assert.Empty(t, mailer.sent, "no mail may be sent for an address with no user")
+	assert.Empty(t, publisher.published, "no event may be published for an address with no user")
 	assert.Equal(t, tokensBefore, countPasswordResetTokens(t, ctx, pool),
 		"no token may be issued for an address with no user")
 }
@@ -141,9 +186,10 @@ func TestRequestPasswordResetIssuesATokenAndMailsTheRawSecret(t *testing.T) {
 
 	user := createResetTestUser(t, ctx, pool)
 	mailer := &recordingPasswordResetMailer{}
+	publisher := &recordingPasswordResetEventPublisher{}
 
 	issuedAt := time.Now()
-	require.NoError(t, newRequestPasswordReset(pool, mailer).RequestPasswordReset(ctx, user.Email))
+	require.NoError(t, newRequestPasswordReset(pool, mailer, publisher).RequestPasswordReset(ctx, user.Email))
 
 	sent := mailer.only(t)
 	assert.Equal(t, user.Email, sent.toEmail, "the mail must go to the address that was looked up")
@@ -165,6 +211,8 @@ func TestRequestPasswordResetIssuesATokenAndMailsTheRawSecret(t *testing.T) {
 
 	assert.Equal(t, 1, countPasswordResetTokensForUser(t, ctx, pool, user.Id),
 		"a single request must issue exactly one token")
+
+	requirePasswordResetEventMatches(t, publisher.only(t), user, sent.resetLink)
 }
 
 func TestRequestPasswordResetInvalidatesThePreviousToken(t *testing.T) {
@@ -174,12 +222,14 @@ func TestRequestPasswordResetInvalidatesThePreviousToken(t *testing.T) {
 
 	user := createResetTestUser(t, ctx, pool)
 	mailer := &recordingPasswordResetMailer{}
-	useCase := newRequestPasswordReset(pool, mailer)
+	publisher := &recordingPasswordResetEventPublisher{}
+	useCase := newRequestPasswordReset(pool, mailer, publisher)
 
 	require.NoError(t, useCase.RequestPasswordReset(ctx, user.Email))
 	require.NoError(t, useCase.RequestPasswordReset(ctx, user.Email))
 
 	require.Len(t, mailer.sent, 2, "each request must produce its own mail")
+	require.Len(t, publisher.published, 2, "each request must produce its own event")
 
 	firstToken := rawTokenFromLink(t, mailer.sent[0].resetLink)
 	secondToken := rawTokenFromLink(t, mailer.sent[1].resetLink)
@@ -194,6 +244,11 @@ func TestRequestPasswordResetInvalidatesThePreviousToken(t *testing.T) {
 	second, err := tokens.FindByDigest(ctx, domain.HashPasswordResetToken(secondToken))
 	require.NoError(t, err)
 	assert.Nil(t, second.UsedAt, "the token issued last must remain redeemable")
+
+	assert.Equal(t, mailer.sent[0].resetLink, publisher.published[0].ResetURL,
+		"each event must carry the link of the mail it accompanies")
+	assert.Equal(t, mailer.sent[1].resetLink, publisher.published[1].ResetURL,
+		"each event must carry the link of the mail it accompanies")
 }
 
 func TestRequestPasswordResetSucceedsWhenDeliveryFails(t *testing.T) {
@@ -203,8 +258,9 @@ func TestRequestPasswordResetSucceedsWhenDeliveryFails(t *testing.T) {
 
 	user := createResetTestUser(t, ctx, pool)
 	mailer := &recordingPasswordResetMailer{sendErr: errors.New("resend: 502 bad gateway")}
+	publisher := &recordingPasswordResetEventPublisher{}
 
-	require.NoError(t, newRequestPasswordReset(pool, mailer).RequestPasswordReset(ctx, user.Email),
+	require.NoError(t, newRequestPasswordReset(pool, mailer, publisher).RequestPasswordReset(ctx, user.Email),
 		"a delivery failure must not fail the request")
 
 	sent := mailer.only(t)
@@ -213,5 +269,33 @@ func TestRequestPasswordResetSucceedsWhenDeliveryFails(t *testing.T) {
 	stored, err := persistence.NewPasswordResetTokenRepository(pool).
 		FindByDigest(ctx, domain.HashPasswordResetToken(rawToken))
 	require.NoError(t, err, "the token must survive a delivery failure so a retry can still use it")
+	assert.Nil(t, stored.UsedAt)
+
+	requirePasswordResetEventMatches(t, publisher.only(t), user, sent.resetLink)
+}
+
+func TestRequestPasswordResetSucceedsWhenTheEventFailsToPublish(t *testing.T) {
+	pgConn := newTestPgConn(t)
+	pool := pgConn.Pool()
+	ctx := testContext(t)
+
+	user := createResetTestUser(t, ctx, pool)
+	mailer := &recordingPasswordResetMailer{}
+	publisher := &recordingPasswordResetEventPublisher{publishErr: errors.New("kafka: broker unreachable")}
+
+	require.NoError(t, newRequestPasswordReset(pool, mailer, publisher).RequestPasswordReset(ctx, user.Email),
+		"a publish failure must not fail the request")
+
+	sent := mailer.only(t)
+	assert.Equal(t, user.Email, sent.toEmail,
+		"the reset email must still go out when only the event publish fails")
+
+	requirePasswordResetEventMatches(t, publisher.only(t), user, sent.resetLink)
+
+	rawToken := rawTokenFromLink(t, sent.resetLink)
+
+	stored, err := persistence.NewPasswordResetTokenRepository(pool).
+		FindByDigest(ctx, domain.HashPasswordResetToken(rawToken))
+	require.NoError(t, err, "the token must survive a publish failure so the emailed link still works")
 	assert.Nil(t, stored.UsedAt)
 }

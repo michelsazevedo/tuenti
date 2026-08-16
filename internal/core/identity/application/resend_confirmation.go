@@ -16,19 +16,27 @@ type ResendConfirmationUseCase interface {
 }
 
 type resendConfirmation struct {
-	users   domain.UserRepository
-	tokens  domain.EmailConfirmationTokenRepository
-	mailer  domain.ConfirmationMailer
-	baseURL string
+	users     domain.UserRepository
+	tokens    domain.EmailConfirmationTokenRepository
+	mailer    domain.ConfirmationMailer
+	publisher domain.ConfirmationEventPublisher
+	baseURL   string
 }
 
 func NewResendConfirmation(
 	users domain.UserRepository,
 	tokens domain.EmailConfirmationTokenRepository,
 	mailer domain.ConfirmationMailer,
+	publisher domain.ConfirmationEventPublisher,
 	conf *config.Config,
 ) ResendConfirmationUseCase {
-	return &resendConfirmation{users: users, tokens: tokens, mailer: mailer, baseURL: conf.Settings.EmailConfirmationBaseURL}
+	return &resendConfirmation{
+		users:     users,
+		tokens:    tokens,
+		mailer:    mailer,
+		publisher: publisher,
+		baseURL:   conf.Settings.EmailConfirmationBaseURL,
+	}
 }
 
 func (s *resendConfirmation) ResendConfirmation(ctx context.Context, email string) error {
@@ -68,6 +76,11 @@ func (s *resendConfirmation) ResendConfirmation(ctx context.Context, email strin
 
 	if err := s.mailer.SendWelcomeConfirmation(ctx, user.Email, confirmationURL); err != nil {
 		logConfirmationEmailFailure(ctx, user, err)
+	}
+
+	event := domain.NewEmailConfirmationRequested(user.Id.String(), user.Name, user.Email, confirmationURL)
+	if err := s.publisher.PublishEmailConfirmationRequested(ctx, event); err != nil {
+		logConfirmationEventPublishFailure(ctx, user, err)
 	}
 
 	return nil

@@ -30,23 +30,26 @@ type CreateInvitationUseCase interface {
 }
 
 type createInvitation struct {
-	uow     *database.UnitOfWork
-	authz   MembershipAuthorizationService
-	mailer  domain.InvitationMailer
-	baseURL string
+	uow       *database.UnitOfWork
+	authz     MembershipAuthorizationService
+	mailer    domain.InvitationMailer
+	publisher domain.InvitationEventPublisher
+	baseURL   string
 }
 
 func NewCreateInvitation(
 	uow *database.UnitOfWork,
 	authz MembershipAuthorizationService,
 	mailer domain.InvitationMailer,
+	publisher domain.InvitationEventPublisher,
 	conf *config.Config,
 ) CreateInvitationUseCase {
 	return &createInvitation{
-		uow:     uow,
-		authz:   authz,
-		mailer:  mailer,
-		baseURL: conf.Settings.InvitationBaseURL,
+		uow:       uow,
+		authz:     authz,
+		mailer:    mailer,
+		publisher: publisher,
+		baseURL:   conf.Settings.InvitationBaseURL,
 	}
 }
 
@@ -72,9 +75,12 @@ func (c *createInvitation) CreateInvitation(
 
 	now := time.Now().UTC()
 
+	inviterID := authorization.Membership().UserId
+
 	var (
 		invitation       *domain.Invitation
 		organizationName string
+		inviterName      string
 	)
 
 	err = c.uow.Do(ctx, func(tx pgx.Tx) error {
@@ -84,6 +90,13 @@ func (c *createInvitation) CreateInvitation(
 		}
 
 		organizationName = organization.Name
+
+		inviter, err := identitypersistence.NewUserRepository(tx).FindByID(ctx, inviterID)
+		if err != nil {
+			return err
+		}
+
+		inviterName = inviter.Name
 
 		if err := c.ensureNotAlreadyMember(ctx, tx, email, organizationID); err != nil {
 			return err
@@ -110,6 +123,7 @@ func (c *createInvitation) CreateInvitation(
 
 	c.logInvitationCreated(ctx, invitation)
 	c.sendInvitation(ctx, invitation, organizationName, rawToken)
+	c.publishInvitationCreated(ctx, invitation, organizationName, inviterID, inviterName, rawToken)
 
 	return invitation, nil
 }
@@ -176,12 +190,39 @@ func (c *createInvitation) sendInvitation(
 	invitation *domain.Invitation,
 	organizationName, rawToken string,
 ) {
-	invitationURL := c.baseURL + "?token=" + url.QueryEscape(rawToken)
+	invitationURL := c.invitationURL(rawToken)
 
 	err := c.mailer.SendInvitation(ctx, invitation.Email, organizationName, string(invitation.Role), invitationURL)
 	if err != nil {
 		c.logInvitationEmailFailure(ctx, invitation, err)
 	}
+}
+
+func (c *createInvitation) publishInvitationCreated(
+	ctx context.Context,
+	invitation *domain.Invitation,
+	organizationName string,
+	inviterID pgtype.UUID,
+	inviterName, rawToken string,
+) {
+	event := domain.NewOrganizationInvitationCreated(
+		invitation.Id.String(),
+		invitation.OrganizationId.String(),
+		organizationName,
+		inviterID.String(),
+		inviterName,
+		invitation.Email,
+		string(invitation.Role),
+		c.invitationURL(rawToken),
+	)
+
+	if err := c.publisher.PublishOrganizationInvitationCreated(ctx, event); err != nil {
+		c.logInvitationEventPublishFailure(ctx, invitation, err)
+	}
+}
+
+func (c *createInvitation) invitationURL(rawToken string) string {
+	return c.baseURL + "?token=" + url.QueryEscape(rawToken)
 }
 
 func (c *createInvitation) logInvitationEmailFailure(ctx context.Context, invitation *domain.Invitation, err error) {
@@ -193,4 +234,19 @@ func (c *createInvitation) logInvitationEmailFailure(ctx context.Context, invita
 		Str("organization_id", invitation.OrganizationId.String()).
 		Err(err).
 		Msg("Invitation email delivery failed; the issued invitation remains valid for its TTL")
+}
+
+func (c *createInvitation) logInvitationEventPublishFailure(
+	ctx context.Context,
+	invitation *domain.Invitation,
+	err error,
+) {
+	logger := observability.Logger(ctx)
+
+	logger.Warn().
+		Str("event", "invitation_event_publish_failed").
+		Str("invitation_id", invitation.Id.String()).
+		Str("organization_id", invitation.OrganizationId.String()).
+		Err(err).
+		Msg("Invitation event publish failed; the issued invitation remains valid for its TTL")
 }

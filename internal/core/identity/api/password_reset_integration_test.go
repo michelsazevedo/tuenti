@@ -77,6 +77,28 @@ func (m *captureMailer) messages() []sentEmail {
 	return append([]sentEmail(nil), m.sent...)
 }
 
+type capturePublisher struct {
+	mu        sync.Mutex
+	published []domain.PasswordResetRequested
+	err       error
+}
+
+func (p *capturePublisher) PublishPasswordResetRequested(_ context.Context, event domain.PasswordResetRequested) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.published = append(p.published, event)
+
+	return p.err
+}
+
+func (p *capturePublisher) events() []domain.PasswordResetRequested {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return append([]domain.PasswordResetRequested(nil), p.published...)
+}
+
 func (e sentEmail) token(t *testing.T) string {
 	t.Helper()
 
@@ -93,6 +115,7 @@ type resetEnv struct {
 	server       *echo.Echo
 	pool         *pgxpool.Pool
 	mailer       *captureMailer
+	publisher    *capturePublisher
 	users        domain.UserRepository
 	tokens       domain.PasswordResetTokenRepository
 	refreshStore domain.RefreshTokenStore
@@ -139,13 +162,14 @@ func newResetEnv(t *testing.T) *resetEnv {
 	refreshStore := persistence.NewRefreshTokenStore(client)
 	memberships := orgrepo.NewMembershipRepository(pool)
 	mailer := &captureMailer{}
+	publisher := &capturePublisher{}
 
 	authz := api.NewAuthzHandler(
 		nil,
 		application.NewSignin(users, memberships, refreshStore, conf),
 		nil,
 		application.NewRefresh(refreshStore, memberships, conf),
-		application.NewRequestPasswordReset(users, tokens, mailer, conf),
+		application.NewRequestPasswordReset(users, tokens, mailer, publisher, conf),
 		application.NewConfirmPasswordReset(database.NewUnitOfWork(pgConn), tokens, refreshStore),
 		nil,
 		nil,
@@ -169,6 +193,7 @@ func newResetEnv(t *testing.T) *resetEnv {
 		server:       server,
 		pool:         pool,
 		mailer:       mailer,
+		publisher:    publisher,
 		users:        users,
 		tokens:       tokens,
 		refreshStore: refreshStore,
@@ -347,6 +372,14 @@ func TestPasswordResetEndToEnd(t *testing.T) {
 	messages := env.mailer.messages()
 	require.Len(t, messages, 1, "exactly one reset mail must be sent")
 	assert.Equal(t, user.Email, messages[0].to)
+
+	events := env.publisher.events()
+	require.Len(t, events, 1, "the reset mail must be accompanied by exactly one event")
+	assert.Equal(t, domain.EventPasswordResetRequested, events[0].Event)
+	assert.Equal(t, user.Id.String(), events[0].UserID)
+	assert.Equal(t, user.Email, events[0].Email)
+	assert.Equal(t, messages[0].link, events[0].ResetURL,
+		"the event must carry the same link that was emailed")
 
 	rawToken := messages[0].token(t)
 
