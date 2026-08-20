@@ -4,12 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/michelsazevedo/tuenti/internal/core/organization/domain"
-	"github.com/michelsazevedo/tuenti/internal/core/organization/persistence"
-	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/observability"
 )
 
@@ -18,12 +15,15 @@ type RevokeInvitationUseCase interface {
 }
 
 type revokeInvitation struct {
-	uow   *database.UnitOfWork
-	authz MembershipAuthorizationService
+	invitations domain.InvitationRepository
+	authz       MembershipAuthorizationService
 }
 
-func NewRevokeInvitation(uow *database.UnitOfWork, authz MembershipAuthorizationService) RevokeInvitationUseCase {
-	return &revokeInvitation{uow: uow, authz: authz}
+func NewRevokeInvitation(
+	invitations domain.InvitationRepository,
+	authz MembershipAuthorizationService,
+) RevokeInvitationUseCase {
+	return &revokeInvitation{invitations: invitations, authz: authz}
 }
 
 func (u *revokeInvitation) RevokeInvitation(
@@ -34,36 +34,32 @@ func (u *revokeInvitation) RevokeInvitation(
 		return err
 	}
 
-	return u.uow.Do(ctx, func(tx pgx.Tx) error {
-		invitations := persistence.NewInvitationRepository(tx)
+	invitation, err := u.invitations.FindByID(ctx, invitationID)
+	if err != nil {
+		return err
+	}
 
-		invitation, err := invitations.FindByID(ctx, invitationID)
-		if err != nil {
-			return err
-		}
+	if invitation.OrganizationId != organizationID {
+		return domain.ErrInvitationNotFound
+	}
 
-		if invitation.OrganizationId != organizationID {
-			return domain.ErrInvitationNotFound
-		}
+	if !authorization.CanRevokeInvitation(invitation.Role) {
+		return domain.ErrInvitationForbidden
+	}
 
-		if !authorization.CanRevokeInvitation(invitation.Role) {
-			return domain.ErrInvitationForbidden
-		}
+	now := time.Now().UTC()
 
-		now := time.Now().UTC()
-
-		if invitation.IsAccepted() || invitation.IsRevoked() || invitation.IsExpired(now) {
-			return nil
-		}
-
-		if err := invitations.MarkRevoked(ctx, invitation.Id, now); err != nil {
-			return err
-		}
-
-		logInvitationRevoked(ctx, invitation, revokerUserID)
-
+	if invitation.IsAccepted() || invitation.IsRevoked() || invitation.IsExpired(now) {
 		return nil
-	})
+	}
+
+	if err := u.invitations.MarkRevoked(ctx, invitation.Id, now); err != nil {
+		return err
+	}
+
+	logInvitationRevoked(ctx, invitation, revokerUserID)
+
+	return nil
 }
 
 func logInvitationRevoked(ctx context.Context, invitation *domain.Invitation, revokerUserID pgtype.UUID) {

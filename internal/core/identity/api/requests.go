@@ -8,11 +8,17 @@ import (
 
 var validate = validator.New()
 
+type OrganizationRequest struct {
+	Name              string `json:"name" validate:"required"`
+	IndustryID        string `json:"industry_id" validate:"required,uuid"`
+	NumberOfEmployees int    `json:"number_of_employees" validate:"required,gt=0"`
+}
+
 type SignupRequest struct {
-	Name             string `json:"name" validate:"required"`
-	Email            string `json:"email" validate:"required,email"`
-	Password         string `json:"password" validate:"required,min=8"`
-	OrganizationName string `json:"organization_name" validate:"required"`
+	Name         string              `json:"name" validate:"required"`
+	Email        string              `json:"email" validate:"required,email"`
+	Password     string              `json:"password" validate:"required,min=8"`
+	Organization OrganizationRequest `json:"organization" validate:"required"`
 }
 
 func (r *SignupRequest) Validate() error {

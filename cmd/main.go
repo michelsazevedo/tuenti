@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/michelsazevedo/tuenti/internal/core/catalog"
 	"github.com/michelsazevedo/tuenti/internal/core/identity"
 	"github.com/michelsazevedo/tuenti/internal/core/organization"
 	"github.com/michelsazevedo/tuenti/internal/http"
@@ -22,6 +23,7 @@ func main() {
 		observability.Telemetry(),
 		identity.Identity(),
 		organization.Organization(),
+		catalog.Catalog(),
 		http.Http(),
 	)
 

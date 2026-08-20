@@ -64,7 +64,7 @@ func requireSchema(t *testing.T, pool *pgxpool.Pool) {
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
 
-	for _, table := range []string{"organizations", "memberships", "users"} {
+	for _, table := range []string{"organizations", "memberships", "users", "industries"} {
 		var name *string
 
 		err := pool.QueryRow(ctx, `SELECT to_regclass($1)::text`, "public."+table).Scan(&name)
@@ -90,6 +90,8 @@ func createTestOrganization(t *testing.T, pool *pgxpool.Pool) *domain.Organizati
 	now := time.Now().UTC()
 	org := &domain.Organization{
 		Name:               "Acme " + randomSuffix(t),
+		IndustryID:         createTestIndustry(t, pool),
+		NumberOfEmployees:  10,
 		TrialStartsAt:      now,
 		TrialEndsAt:        now.Add(testTrialDuration),
 		SubscriptionStatus: domain.Trialing,
@@ -114,6 +116,8 @@ func createTestOrganizationWithSubscription(
 
 	org := &domain.Organization{
 		Name:               "Acme " + randomSuffix(t),
+		IndustryID:         createTestIndustry(t, pool),
+		NumberOfEmployees:  10,
 		TrialStartsAt:      trialEndsAt.Add(-testTrialDuration),
 		TrialEndsAt:        trialEndsAt,
 		SubscriptionStatus: status,
@@ -123,6 +127,27 @@ func createTestOrganizationWithSubscription(
 	deleteRow(t, pool, `DELETE FROM organizations WHERE id = $1`, org.Id)
 
 	return org
+}
+
+func createTestIndustry(t *testing.T, pool *pgxpool.Pool) pgtype.UUID {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+
+	suffix := randomSuffix(t)
+
+	var id pgtype.UUID
+
+	err := pool.QueryRow(ctx,
+		`INSERT INTO industries(name, slug) VALUES($1, $2) RETURNING id`,
+		"Aerospace "+suffix, "aerospace_"+suffix,
+	).Scan(&id)
+	require.NoError(t, err)
+
+	deleteRow(t, pool, `DELETE FROM industries WHERE id = $1`, id)
+
+	return id
 }
 
 func createTestUser(t *testing.T, pool *pgxpool.Pool) *identity.User {

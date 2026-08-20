@@ -2,7 +2,6 @@ package api
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -166,17 +165,17 @@ func (h *invitationHandler) authorizedOrganization(c echo.Context) (pgtype.UUID,
 
 	logger := observability.Logger(c.Request().Context())
 
-	userID, tokenOrganizationID, err := authenticatedContext(c)
+	identity, err := m.IdentityFromContext(c.Request().Context())
 	if err != nil {
 		logger.Error().Err(err).
-			Str("event", "invitation_handler_missing_context").
+			Str("event", "invitation_handler_missing_identity").
 			Str("path", c.Path()).
 			Msg("invitation handler ran without an authenticated user and organization, RequireAuth must run before it")
 
 		return pgtype.UUID{}, pgtype.UUID{}, echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
-	if tokenOrganizationID != pathOrganizationID {
+	if identity.CurrentOrganizationID != pathOrganizationID {
 		logger.Warn().
 			Str("event", "invitation_handler_organization_mismatch").
 			Str("path", c.Path()).
@@ -185,49 +184,8 @@ func (h *invitationHandler) authorizedOrganization(c echo.Context) (pgtype.UUID,
 		return pgtype.UUID{}, pgtype.UUID{}, echo.NewHTTPError(http.StatusForbidden, msgOrganizationMismatch)
 	}
 
-	return userID, pathOrganizationID, nil
+	return identity.CurrentUserID, pathOrganizationID, nil
 }
-
-// authenticatedContext reads what RequireAuth put on the context. It duplicates a few lines of the
-// middleware's own accessor on purpose: reaching into that package's unexported helpers would couple this
-// package to middleware internals for no gain, while these two constants are part of its public contract.
-func authenticatedContext(c echo.Context) (userID pgtype.UUID, organizationID pgtype.UUID, err error) {
-	userID, err = contextUUID(c, m.ContextKeyUserID, errNoUserContext, errUnparsableUserContext)
-	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, err
-	}
-
-	organizationID, err = contextUUID(c, m.ContextKeyOrganizationID, errNoOrganizationContext, errUnparsableOrganizationContext)
-	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, err
-	}
-
-	return userID, organizationID, nil
-}
-
-func contextUUID(c echo.Context, key string, missing, unparsable error) (pgtype.UUID, error) {
-	raw, ok := c.Get(key).(string)
-	if !ok || raw == "" {
-		return pgtype.UUID{}, missing
-	}
-
-	var id pgtype.UUID
-	if err := id.Scan(raw); err != nil {
-		return pgtype.UUID{}, fmt.Errorf("%w: %q", unparsable, raw)
-	}
-
-	return id, nil
-}
-
-var (
-	errNoUserContext = errors.New("no authenticated user on the request context")
-
-	errUnparsableUserContext = errors.New("authenticated user id is not a uuid")
-
-	errNoOrganizationContext = errors.New("no authenticated organization on the request context")
-
-	errUnparsableOrganizationContext = errors.New("authenticated organization id is not a uuid")
-)
 
 const (
 	msgOrganizationMismatch = "organization mismatch"

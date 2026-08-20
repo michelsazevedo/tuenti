@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/michelsazevedo/tuenti/internal/core/identity/domain"
@@ -19,29 +20,47 @@ import (
 
 const emailConfirmationTokenTTL = 24 * time.Hour
 
+type SignupOrganization struct {
+	Name              string
+	IndustryID        pgtype.UUID
+	NumberOfEmployees int
+}
+
 type SignupUseCase interface {
-	SignUp(ctx context.Context, user *domain.User, organizationName string) error
+	SignUp(ctx context.Context, user *domain.User, org SignupOrganization) error
 }
 
 type signup struct {
-	uow       *database.UnitOfWork
-	publisher domain.ConfirmationEventPublisher
-	baseURL   string
+	uow          *database.UnitOfWork
+	publisher    domain.ConfirmationEventPublisher
+	industryRepo orgdomain.IndustryRepository
+	baseURL      string
 }
 
 func NewSignup(
 	uow *database.UnitOfWork,
 	publisher domain.ConfirmationEventPublisher,
+	industryRepo orgdomain.IndustryRepository,
 	conf *config.Config,
 ) SignupUseCase {
 	return &signup{
-		uow:       uow,
-		publisher: publisher,
-		baseURL:   conf.Settings.EmailConfirmationBaseURL,
+		uow:          uow,
+		publisher:    publisher,
+		industryRepo: industryRepo,
+		baseURL:      conf.Settings.EmailConfirmationBaseURL,
 	}
 }
 
-func (s *signup) SignUp(ctx context.Context, user *domain.User, organizationName string) error {
+func (s *signup) SignUp(ctx context.Context, user *domain.User, org SignupOrganization) error {
+	exists, err := s.industryRepo.Exists(ctx, org.IndustryID)
+	if err != nil {
+		return err
+	}
+
+	if !exists {
+		return orgdomain.ErrIndustryNotFound
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
@@ -57,14 +76,18 @@ func (s *signup) SignUp(ctx context.Context, user *domain.User, organizationName
 			return err
 		}
 
-		org := &orgdomain.Organization{Name: organizationName}
-		org.StartTrial(time.Now().UTC())
+		orgEntity := &orgdomain.Organization{
+			Name:              org.Name,
+			IndustryID:        org.IndustryID,
+			NumberOfEmployees: org.NumberOfEmployees,
+		}
+		orgEntity.StartTrial(time.Now().UTC())
 
-		if err := orgpersistence.NewOrganizationRepository(tx).Create(ctx, org); err != nil {
+		if err := orgpersistence.NewOrganizationRepository(tx).Create(ctx, orgEntity); err != nil {
 			return err
 		}
 
-		membership := &orgdomain.Membership{OrganizationId: org.Id, UserId: user.Id, Role: orgdomain.RoleManager}
+		membership := &orgdomain.Membership{OrganizationId: orgEntity.Id, UserId: user.Id, Role: orgdomain.RoleManager}
 
 		if err := orgpersistence.NewMembershipRepository(tx).Create(ctx, membership); err != nil {
 			return err

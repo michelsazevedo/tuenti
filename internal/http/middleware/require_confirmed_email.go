@@ -2,10 +2,8 @@ package middleware
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/labstack/echo/v4"
 
 	identitydomain "github.com/michelsazevedo/tuenti/internal/core/identity/domain"
@@ -15,12 +13,6 @@ import (
 const emailNotConfirmedErrorCode = "email_not_confirmed"
 
 const emailNotConfirmedMessage = "Please confirm your email address to continue."
-
-var (
-	errNoUserContext = errors.New("no authenticated user on the request context")
-
-	errUnparsableUserContext = errors.New("authenticated user id is not a uuid")
-)
 
 type emailNotConfirmedResponse struct {
 	Code    string `json:"code"`
@@ -38,22 +30,17 @@ func RequireConfirmedEmail(users identitydomain.UserRepository) echo.MiddlewareF
 
 			logger := observability.Logger(ctx)
 
-			userID, err := authenticatedUserID(c)
+			identity, err := IdentityFromContext(ctx)
 			if err != nil {
-				event := "require_confirmed_email_missing_user_context"
-				if errors.Is(err, errUnparsableUserContext) {
-					event = "require_confirmed_email_unparsable_user_context"
-				}
-
 				logger.Error().Err(err).
-					Str("event", event).
+					Str("event", "require_confirmed_email_missing_identity").
 					Str("path", c.Path()).
 					Msg("require confirmed email ran without an authenticated user, RequireAuth must run before it")
 
 				return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 			}
 
-			user, err := users.FindByID(ctx, userID)
+			user, err := users.FindByID(ctx, identity.CurrentUserID)
 			if err != nil {
 				event := "require_confirmed_email_lookup_failed"
 				if errors.Is(err, identitydomain.ErrUserNotFound) {
@@ -83,18 +70,4 @@ func RequireConfirmedEmail(users identitydomain.UserRepository) echo.MiddlewareF
 			return next(c)
 		}
 	}
-}
-
-func authenticatedUserID(c echo.Context) (pgtype.UUID, error) {
-	raw, ok := c.Get(ContextKeyUserID).(string)
-	if !ok || raw == "" {
-		return pgtype.UUID{}, errNoUserContext
-	}
-
-	var id pgtype.UUID
-	if err := id.Scan(raw); err != nil {
-		return pgtype.UUID{}, fmt.Errorf("%w: %q", errUnparsableUserContext, raw)
-	}
-
-	return id, nil
 }

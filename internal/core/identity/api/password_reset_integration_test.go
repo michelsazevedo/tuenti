@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 	goredis "github.com/redis/go-redis/v9"
@@ -20,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 
+	catalogapi "github.com/michelsazevedo/tuenti/internal/core/catalog/api"
 	"github.com/michelsazevedo/tuenti/internal/core/identity/api"
 	"github.com/michelsazevedo/tuenti/internal/core/identity/application"
 	"github.com/michelsazevedo/tuenti/internal/core/identity/domain"
@@ -158,6 +160,7 @@ func newResetEnv(t *testing.T) *resetEnv {
 		authz,
 		orgapi.NewOrganizationHandler(orgapp.NewGetOrganizationByID(orgpersistence.NewOrganizationRepository(pool))),
 		orgapi.NewInvitationHandler(nil, nil, nil, nil),
+		catalogapi.NewItemHandler(nil, nil, nil, nil, nil),
 	)
 
 	return &resetEnv{
@@ -277,6 +280,8 @@ func (env *resetEnv) createResetTestUser(t *testing.T) *domain.User {
 	now := time.Now().UTC()
 	org := &orgdomain.Organization{
 		Name:               "Acme " + suffix,
+		IndustryID:         resetTestIndustry(t, env.pool),
+		NumberOfEmployees:  10,
 		TrialStartsAt:      now,
 		TrialEndsAt:        now.Add(14 * 24 * time.Hour),
 		SubscriptionStatus: orgdomain.Trialing,
@@ -322,6 +327,27 @@ func randomSuffix(t *testing.T) string {
 	require.NoError(t, err)
 
 	return hex.EncodeToString(buf)
+}
+
+func resetTestIndustry(t *testing.T, pool *pgxpool.Pool) pgtype.UUID {
+	t.Helper()
+
+	suffix := randomSuffix(t)
+
+	var id pgtype.UUID
+
+	ctx := context.Background()
+	err := pool.QueryRow(ctx,
+		`INSERT INTO industries(name, slug) VALUES($1, $2) RETURNING id`,
+		"Aerospace "+suffix, "aerospace_"+suffix,
+	).Scan(&id)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM industries WHERE id = $1`, id)
+	})
+
+	return id
 }
 
 func TestPasswordResetEndToEnd(t *testing.T) {

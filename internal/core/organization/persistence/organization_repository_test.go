@@ -24,6 +24,8 @@ func TestOrganizationRepositoryCreate(t *testing.T) {
 	now := time.Now().UTC()
 	org := &domain.Organization{
 		Name:               "Acme " + randomSuffix(t),
+		IndustryID:         createTestIndustry(t, pool),
+		NumberOfEmployees:  10,
 		TrialStartsAt:      now,
 		TrialEndsAt:        now.Add(testTrialDuration),
 		SubscriptionStatus: domain.Trialing,
@@ -50,6 +52,8 @@ func TestOrganizationRepositoryFindByID(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, created.Id, found.Id)
 		assert.Equal(t, created.Name, found.Name)
+		assert.Equal(t, created.IndustryID, found.IndustryID)
+		assert.Equal(t, created.NumberOfEmployees, found.NumberOfEmployees)
 		assert.False(t, found.CreatedAt.IsZero(), "created_at must be hydrated")
 		assert.False(t, found.UpdatedAt.IsZero(), "updated_at must be hydrated")
 	})

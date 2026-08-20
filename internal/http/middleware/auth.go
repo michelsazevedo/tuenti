@@ -1,23 +1,42 @@
 package middleware
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/labstack/echo/v4"
 
 	"github.com/michelsazevedo/tuenti/internal/core/identity/application"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/observability"
 )
 
-const (
-	ContextKeyUserID = "user_id"
+const bearerScheme = "Bearer"
 
-	ContextKeyOrganizationID = "organization_id"
+type Identity struct {
+	CurrentUserID         pgtype.UUID
+	CurrentOrganizationID pgtype.UUID
+}
 
-	bearerScheme = "Bearer"
-)
+type identityContextKey struct{}
+
+var ErrIdentityMissing = errors.New("no authenticated identity on the request context")
+
+func WithIdentity(ctx context.Context, identity Identity) context.Context {
+	return context.WithValue(ctx, identityContextKey{}, identity)
+}
+
+func IdentityFromContext(ctx context.Context) (Identity, error) {
+	identity, ok := ctx.Value(identityContextKey{}).(Identity)
+	if !ok {
+		return Identity{}, ErrIdentityMissing
+	}
+
+	return identity, nil
+}
 
 func RequireAuth(secret, environment string) echo.MiddlewareFunc {
 	if secret == "" {
@@ -41,9 +60,6 @@ func RequireAuth(secret, environment string) echo.MiddlewareFunc {
 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			c.Set(ContextKeyUserID, nil)
-			c.Set(ContextKeyOrganizationID, nil)
-
 			logger := observability.Logger(c.Request().Context())
 
 			rawToken, ok := bearerToken(c.Request().Header.Get(echo.HeaderAuthorization))
@@ -70,18 +86,29 @@ func RequireAuth(secret, environment string) echo.MiddlewareFunc {
 				return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired token")
 			}
 
-			if claims.Subject == "" || claims.OrganizationID == "" {
-				logger.Warn().
+			var identity Identity
+
+			if err := identity.CurrentUserID.Scan(claims.Subject); err != nil {
+				logger.Warn().Err(err).
 					Str("event", "auth_claims_incomplete").
 					Str("remote_ip", c.RealIP()).
 					Str("path", c.Path()).
-					Msg("request rejected with a token missing subject or organization")
+					Msg("request rejected with a token missing or carrying an unparsable subject")
 
 				return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired token")
 			}
 
-			c.Set(ContextKeyUserID, claims.Subject)
-			c.Set(ContextKeyOrganizationID, claims.OrganizationID)
+			if err := identity.CurrentOrganizationID.Scan(claims.OrganizationID); err != nil {
+				logger.Warn().Err(err).
+					Str("event", "auth_claims_incomplete").
+					Str("remote_ip", c.RealIP()).
+					Str("path", c.Path()).
+					Msg("request rejected with a token missing or carrying an unparsable organization")
+
+				return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired token")
+			}
+
+			c.SetRequest(c.Request().WithContext(WithIdentity(c.Request().Context(), identity)))
 
 			return next(c)
 		}
