@@ -2,11 +2,18 @@ package domain
 
 import "errors"
 
+type ValidationError struct{ error }
+
+func newValidationError(msg string) ValidationError {
+	return ValidationError{errors.New(msg)}
+}
+
 var (
-	ErrItemNotFound         = errors.New("item not found")
-	ErrInvalidItemType      = errors.New("invalid item type")
-	ErrNameRequired         = errors.New("name required")
-	ErrInvalidRate          = errors.New("invalid rate")
-	ErrInvalidTaxRate       = errors.New("invalid tax rate")
-	ErrInvalidStockQuantity = errors.New("invalid stock quantity")
+	ErrItemNotFound = errors.New("item not found")
+
+	ErrInvalidItemType      = newValidationError("invalid item type")
+	ErrNameRequired         = newValidationError("name required")
+	ErrInvalidRate          = newValidationError("invalid rate")
+	ErrInvalidTaxRate       = newValidationError("invalid tax rate")
+	ErrInvalidStockQuantity = newValidationError("invalid stock quantity")
 )

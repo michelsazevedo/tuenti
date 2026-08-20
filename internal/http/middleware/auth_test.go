@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,10 +26,10 @@ const (
 )
 
 type authenticatedCall struct {
-	status         bool
-	code           int
-	userID         any
-	organizationID any
+	status   bool
+	code     int
+	identity Identity
+	identErr error
 }
 
 func signToken(t *testing.T, method jwt.SigningMethod, key any, claims jwt.Claims) string {
@@ -85,10 +86,18 @@ func serveWithAuth(t *testing.T, authorization string) authenticatedCall {
 	}
 
 	result.code = rec.Code
-	result.userID = c.Get(ContextKeyUserID)
-	result.organizationID = c.Get(ContextKeyOrganizationID)
+	result.identity, result.identErr = IdentityFromContext(c.Request().Context())
 
 	return result
+}
+
+func mustUUID(t *testing.T, raw string) pgtype.UUID {
+	t.Helper()
+
+	var id pgtype.UUID
+	require.NoError(t, id.Scan(raw))
+
+	return id
 }
 
 func TestRequireAuthAcceptsValidToken(t *testing.T) {
@@ -96,8 +105,10 @@ func TestRequireAuthAcceptsValidToken(t *testing.T) {
 
 	require.True(t, call.status, "a valid token must reach the handler")
 	assert.Equal(t, http.StatusOK, call.code)
-	assert.Equal(t, authUserID, call.userID, "the subject must be published as user_id")
-	assert.Equal(t, authOrganizationID, call.organizationID, "the token's organization must be published")
+	require.NoError(t, call.identErr)
+	assert.Equal(t, mustUUID(t, authUserID), call.identity.CurrentUserID, "the subject must be published as the current user")
+	assert.Equal(t, mustUUID(t, authOrganizationID), call.identity.CurrentOrganizationID,
+		"the token's organization must be published")
 }
 
 func TestRequireAuthAcceptsLowercaseScheme(t *testing.T) {
@@ -246,18 +257,23 @@ func TestRequireAuthRejects(t *testing.T) {
 
 			assert.False(t, call.status, "the handler must not run for an unauthenticated request")
 			assert.Equal(t, http.StatusUnauthorized, call.code)
-			assert.Nil(t, call.userID)
-			assert.Nil(t, call.organizationID)
+			assert.ErrorIs(t, call.identErr, ErrIdentityMissing)
 		})
 	}
 }
 
-func TestRequireAuthDiscardsPreSeededIdentity(t *testing.T) {
+func TestRequireAuthIgnoresAPreSeededIdentity(t *testing.T) {
 	e := echo.New()
-	c := e.NewContext(httptest.NewRequest(http.MethodGet, "/protected", nil), httptest.NewRecorder())
 
-	c.Set(ContextKeyUserID, "attacker-supplied")
-	c.Set(ContextKeyOrganizationID, "someone-elses-org")
+	spoofed := Identity{
+		CurrentUserID:         mustUUID(t, authUserID),
+		CurrentOrganizationID: mustUUID(t, authOrganizationID),
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	request = request.WithContext(WithIdentity(request.Context(), spoofed))
+
+	c := e.NewContext(request, httptest.NewRecorder())
 
 	handler := RequireAuth(authSecret, authEnvironment)(func(echo.Context) error {
 		t.Fatal("the handler must not run without a token")
@@ -265,9 +281,7 @@ func TestRequireAuthDiscardsPreSeededIdentity(t *testing.T) {
 		return nil
 	})
 
-	require.Error(t, handler(c))
-	assert.Nil(t, c.Get(ContextKeyUserID), "a spoofed identity must not survive the middleware")
-	assert.Nil(t, c.Get(ContextKeyOrganizationID))
+	require.Error(t, handler(c), "a pre-seeded identity must not let the request skip token validation")
 }
 
 func TestRequireAuthPanicsOnBrokenWiring(t *testing.T) {

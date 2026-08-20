@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/labstack/echo/v4"
 
 	orgdomain "github.com/michelsazevedo/tuenti/internal/core/organization/domain"
@@ -57,17 +56,17 @@ func RequireOrganizationPermission(
 
 			logger := observability.Logger(ctx)
 
-			userID, organizationID, err := authenticatedIdentity(c)
+			identity, err := IdentityFromContext(ctx)
 			if err != nil {
 				logger.Error().Err(err).
-					Str("event", "require_organization_permission_missing_context").
+					Str("event", "require_organization_permission_missing_identity").
 					Str("path", c.Path()).
 					Msg("permission check ran without an authenticated user and organization, RequireAuth must run before it")
 
 				return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 			}
 
-			membership, err := memberships.FindByUserAndOrganization(ctx, userID, organizationID)
+			membership, err := memberships.FindByUserAndOrganization(ctx, identity.CurrentUserID, identity.CurrentOrganizationID)
 			if err != nil {
 				if errors.Is(err, orgdomain.ErrMembershipNotFound) {
 					logger.Warn().
@@ -106,18 +105,4 @@ func forbidden(c echo.Context) error {
 		Code:    forbiddenErrorCode,
 		Message: forbiddenMessage,
 	})
-}
-
-func authenticatedIdentity(c echo.Context) (userID pgtype.UUID, organizationID pgtype.UUID, err error) {
-	userID, err = authenticatedUserID(c)
-	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, err
-	}
-
-	organizationID, err = authenticatedOrganizationID(c)
-	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, err
-	}
-
-	return userID, organizationID, nil
 }

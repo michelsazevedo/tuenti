@@ -60,26 +60,29 @@ type gatedCall struct {
 	body    string
 }
 
-type userOnContext struct {
-	set   bool
-	value any
+type confirmedEmailIdentity struct {
+	set      bool
+	identity Identity
 }
 
-func signedIn(id string) userOnContext {
-	return userOnContext{set: true, value: id}
+func signedInAs(t *testing.T, userID string) confirmedEmailIdentity {
+	t.Helper()
+
+	return confirmedEmailIdentity{set: true, identity: Identity{CurrentUserID: mustUUID(t, userID)}}
 }
 
-func serveWithConfirmationGate(t *testing.T, identity userOnContext, users identitydomain.UserRepository) gatedCall {
+func serveWithConfirmationGate(t *testing.T, identity confirmedEmailIdentity, users identitydomain.UserRepository) gatedCall {
 	t.Helper()
 
 	e := echo.New()
 
-	rec := httptest.NewRecorder()
-	c := e.NewContext(httptest.NewRequest(http.MethodPost, "/patients", nil), rec)
-
+	request := httptest.NewRequest(http.MethodPost, "/patients", nil)
 	if identity.set {
-		c.Set(ContextKeyUserID, identity.value)
+		request = request.WithContext(WithIdentity(request.Context(), identity.identity))
 	}
+
+	rec := httptest.NewRecorder()
+	c := e.NewContext(request, rec)
 
 	result := gatedCall{}
 
@@ -118,7 +121,7 @@ func confirmedAt(t time.Time) *time.Time { return &t }
 func TestRequireConfirmedEmailAllowsConfirmedUsers(t *testing.T) {
 	users := &gateUserRepository{user: gateUser(t, confirmedAt(time.Now().UTC()))}
 
-	call := serveWithConfirmationGate(t, signedIn(gateUserID), users)
+	call := serveWithConfirmationGate(t, signedInAs(t, gateUserID), users)
 
 	assert.True(t, call.reached, "a confirmed user must reach the handler")
 	assert.Equal(t, http.StatusOK, call.code)
@@ -128,7 +131,7 @@ func TestRequireConfirmedEmailAllowsConfirmedUsers(t *testing.T) {
 func TestRequireConfirmedEmailBlocksUnconfirmedUsers(t *testing.T) {
 	users := &gateUserRepository{user: gateUser(t, nil)}
 
-	call := serveWithConfirmationGate(t, signedIn(gateUserID), users)
+	call := serveWithConfirmationGate(t, signedInAs(t, gateUserID), users)
 
 	assert.False(t, call.reached, "an unconfirmed user must not reach the handler")
 	assert.Equal(t, http.StatusForbidden, call.code)
@@ -145,7 +148,7 @@ func TestRequireConfirmedEmailBlocksUnconfirmedUsers(t *testing.T) {
 func TestRequireConfirmedEmailLoadsTheUserFromTheToken(t *testing.T) {
 	users := &gateUserRepository{user: gateUser(t, confirmedAt(time.Now().UTC()))}
 
-	serveWithConfirmationGate(t, signedIn(gateUserID), users)
+	serveWithConfirmationGate(t, signedInAs(t, gateUserID), users)
 
 	var expected pgtype.UUID
 	require.NoError(t, expected.Scan(gateUserID))
@@ -156,7 +159,7 @@ func TestRequireConfirmedEmailLoadsTheUserFromTheToken(t *testing.T) {
 func TestRequireConfirmedEmailFailsClosedOnAnUnknownUser(t *testing.T) {
 	users := &gateUserRepository{findErr: identitydomain.ErrUserNotFound}
 
-	call := serveWithConfirmationGate(t, signedIn(gateUserID), users)
+	call := serveWithConfirmationGate(t, signedInAs(t, gateUserID), users)
 
 	assert.False(t, call.reached)
 	assert.Equal(t, http.StatusInternalServerError, call.code)
@@ -166,7 +169,7 @@ func TestRequireConfirmedEmailFailsClosedOnAnUnknownUser(t *testing.T) {
 func TestRequireConfirmedEmailFailsClosedOnARepositoryError(t *testing.T) {
 	users := &gateUserRepository{findErr: errors.New("postgres: connection refused")}
 
-	call := serveWithConfirmationGate(t, signedIn(gateUserID), users)
+	call := serveWithConfirmationGate(t, signedInAs(t, gateUserID), users)
 
 	assert.False(t, call.reached, "an unverifiable confirmation state must never be treated as confirmed")
 	assert.Equal(t, http.StatusInternalServerError, call.code)
@@ -175,27 +178,15 @@ func TestRequireConfirmedEmailFailsClosedOnARepositoryError(t *testing.T) {
 func TestRequireConfirmedEmailFailsClosedWithoutAnAuthenticatedUser(t *testing.T) {
 	tests := []struct {
 		name     string
-		identity userOnContext
+		identity confirmedEmailIdentity
 	}{
 		{
 			name:     "RequireAuth never ran",
-			identity: userOnContext{},
+			identity: confirmedEmailIdentity{},
 		},
 		{
 			name:     "RequireAuth rejected the request",
-			identity: userOnContext{set: true, value: nil},
-		},
-		{
-			name:     "empty user id",
-			identity: signedIn(""),
-		},
-		{
-			name:     "user id is not a string",
-			identity: userOnContext{set: true, value: 42},
-		},
-		{
-			name:     "user id is not a uuid",
-			identity: signedIn("not-a-uuid"),
+			identity: confirmedEmailIdentity{},
 		},
 	}
 
@@ -217,37 +208,32 @@ func TestRequireConfirmedEmailNeverAnswersPaymentRequired(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		identity userOnContext
+		identity confirmedEmailIdentity
 		users    *gateUserRepository
 	}{
 		{
 			name:     "confirmed",
-			identity: signedIn(gateUserID),
+			identity: signedInAs(t, gateUserID),
 			users:    &gateUserRepository{user: gateUser(t, confirmedAt(now))},
 		},
 		{
 			name:     "unconfirmed",
-			identity: signedIn(gateUserID),
+			identity: signedInAs(t, gateUserID),
 			users:    &gateUserRepository{user: gateUser(t, nil)},
 		},
 		{
 			name:     "user not found",
-			identity: signedIn(gateUserID),
+			identity: signedInAs(t, gateUserID),
 			users:    &gateUserRepository{findErr: identitydomain.ErrUserNotFound},
 		},
 		{
 			name:     "repository failure",
-			identity: signedIn(gateUserID),
+			identity: signedInAs(t, gateUserID),
 			users:    &gateUserRepository{findErr: errors.New("postgres: connection refused")},
 		},
 		{
 			name:     "no authenticated user",
-			identity: userOnContext{},
-			users:    &gateUserRepository{},
-		},
-		{
-			name:     "malformed user id",
-			identity: signedIn("not-a-uuid"),
+			identity: confirmedEmailIdentity{},
 			users:    &gateUserRepository{},
 		},
 	}

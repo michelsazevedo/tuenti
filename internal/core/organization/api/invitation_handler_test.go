@@ -137,13 +137,20 @@ func authenticatedAs(userID, organizationID string) authContext {
 	return authContext{set: true, userID: userID, organizationID: organizationID}
 }
 
-func (a authContext) apply(c echo.Context) {
+func (a authContext) apply(t *testing.T, c echo.Context) {
+	t.Helper()
+
 	if !a.set {
 		return
 	}
 
-	c.Set(m.ContextKeyUserID, a.userID)
-	c.Set(m.ContextKeyOrganizationID, a.organizationID)
+	var userID, organizationID pgtype.UUID
+	require.NoError(t, userID.Scan(a.userID))
+	require.NoError(t, organizationID.Scan(a.organizationID))
+
+	identity := m.Identity{CurrentUserID: userID, CurrentOrganizationID: organizationID}
+
+	c.SetRequest(c.Request().WithContext(m.WithIdentity(c.Request().Context(), identity)))
 }
 
 func newInvitationRequest(method, body string) *http.Request {
@@ -168,7 +175,7 @@ func callCreateInvitation(
 	c.SetPath("/organizations/:organizationId/invitations")
 	c.SetParamNames("organizationId")
 	c.SetParamValues(organizationID)
-	auth.apply(c)
+	auth.apply(t, c)
 
 	handler := NewInvitationHandler(usecase, nil, nil, nil)
 
@@ -193,7 +200,7 @@ func callListInvitations(
 	c.SetPath("/organizations/:organizationId/invitations")
 	c.SetParamNames("organizationId")
 	c.SetParamValues(organizationID)
-	auth.apply(c)
+	auth.apply(t, c)
 
 	handler := NewInvitationHandler(nil, nil, nil, usecase)
 
@@ -218,7 +225,7 @@ func callRevokeInvitation(
 	c.SetPath("/organizations/:organizationId/invitations/:id")
 	c.SetParamNames("organizationId", "id")
 	c.SetParamValues(organizationID, id)
-	auth.apply(c)
+	auth.apply(t, c)
 
 	handler := NewInvitationHandler(nil, nil, usecase, nil)
 
@@ -323,10 +330,7 @@ func TestCreateInvitationFailsClosedWithoutAnAuthenticatedContext(t *testing.T) 
 		auth authContext
 	}{
 		{name: "RequireAuth never ran", auth: authContext{}},
-		{name: "user missing", auth: authContext{set: true, userID: "", organizationID: organizationId}},
-		{name: "organization missing", auth: authContext{set: true, userID: inviterUserId, organizationID: ""}},
-		{name: "user not a uuid", auth: authContext{set: true, userID: "nope", organizationID: organizationId}},
-		{name: "organization not a uuid", auth: authContext{set: true, userID: inviterUserId, organizationID: "nope"}},
+		{name: "RequireAuth rejected the request", auth: authContext{}},
 	}
 
 	for _, test := range tests {

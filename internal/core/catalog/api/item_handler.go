@@ -2,7 +2,6 @@ package api
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -169,35 +168,19 @@ func (h *itemHandler) Delete(c echo.Context) error {
 }
 
 func (h *itemHandler) authenticatedOrganization(c echo.Context) (pgtype.UUID, error) {
-	organizationID, err := contextUUID(
-		c, m.ContextKeyOrganizationID, errNoOrganizationContext, errUnparsableOrganizationContext,
-	)
+	identity, err := m.IdentityFromContext(c.Request().Context())
 	if err != nil {
 		logger := observability.Logger(c.Request().Context())
 
 		logger.Error().Err(err).
-			Str("event", "item_handler_missing_context").
+			Str("event", "item_handler_missing_identity").
 			Str("path", c.Path()).
 			Msg("item handler ran without an authenticated organization, RequireAuth must run before it")
 
 		return pgtype.UUID{}, echo.NewHTTPError(http.StatusInternalServerError, msgInternalServerError)
 	}
 
-	return organizationID, nil
-}
-
-func contextUUID(c echo.Context, key string, missing, unparsable error) (pgtype.UUID, error) {
-	raw, ok := c.Get(key).(string)
-	if !ok || raw == "" {
-		return pgtype.UUID{}, missing
-	}
-
-	var id pgtype.UUID
-	if err := id.Scan(raw); err != nil {
-		return pgtype.UUID{}, fmt.Errorf("%w: %q", unparsable, raw)
-	}
-
-	return id, nil
+	return identity.CurrentOrganizationID, nil
 }
 
 func itemID(c echo.Context) (pgtype.UUID, error) {
@@ -236,8 +219,8 @@ func (h *itemHandler) failure(c echo.Context, err error, event string) error {
 		return echo.NewHTTPError(http.StatusNotFound, domain.ErrItemNotFound.Error())
 	}
 
-	if invalid, ok := itemValidationFailure(err); ok {
-		return echo.NewHTTPError(http.StatusUnprocessableEntity, invalid.Error())
+	if verr, ok := errors.AsType[domain.ValidationError](err); ok {
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, verr.Error())
 	}
 
 	logger := observability.Logger(c.Request().Context())
@@ -249,30 +232,6 @@ func (h *itemHandler) failure(c echo.Context, err error, event string) error {
 
 	return echo.NewHTTPError(http.StatusInternalServerError, msgInternalServerError)
 }
-
-var itemValidationFailures = []error{
-	domain.ErrNameRequired,
-	domain.ErrInvalidRate,
-	domain.ErrInvalidTaxRate,
-	domain.ErrInvalidItemType,
-	domain.ErrInvalidStockQuantity,
-}
-
-func itemValidationFailure(err error) (error, bool) {
-	for _, invalid := range itemValidationFailures {
-		if errors.Is(err, invalid) {
-			return invalid, true
-		}
-	}
-
-	return nil, false
-}
-
-var (
-	errNoOrganizationContext = errors.New("no authenticated organization on the request context")
-
-	errUnparsableOrganizationContext = errors.New("authenticated organization id is not a uuid")
-)
 
 const (
 	msgInvalidBody = "invalid request body"

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -126,12 +125,12 @@ func EmailAndIPKeyExtractor(c echo.Context) (string, error) {
 }
 
 func OrganizationKeyExtractor(c echo.Context) (string, error) {
-	organizationID, ok := c.Get(ContextKeyOrganizationID).(string)
-	if !ok || organizationID == "" {
-		return "", errors.New("no authenticated organization on the request context")
+	identity, err := IdentityFromContext(c.Request().Context())
+	if err != nil {
+		return "", err
 	}
 
-	return organizationID, nil
+	return identity.CurrentOrganizationID.String(), nil
 }
 
 func peekEmail(request *http.Request) (string, bool) {

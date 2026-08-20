@@ -2,11 +2,9 @@ package middleware
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/labstack/echo/v4"
 
 	orgdomain "github.com/michelsazevedo/tuenti/internal/core/organization/domain"
@@ -14,12 +12,6 @@ import (
 )
 
 const subscriptionRequiredErrorCode = "subscription_required"
-
-var (
-	errNoOrganizationContext = errors.New("no authenticated organization on the request context")
-
-	errUnparsableOrganizationContext = errors.New("authenticated organization id is not a uuid")
-)
 
 type subscriptionRequiredResponse struct {
 	Error              string                       `json:"error"`
@@ -37,17 +29,17 @@ func SubscriptionGuard(orgs orgdomain.OrganizationRepository, policy orgdomain.O
 
 			logger := observability.Logger(ctx)
 
-			organizationID, err := authenticatedOrganizationID(c)
+			identity, err := IdentityFromContext(ctx)
 			if err != nil {
 				logger.Error().Err(err).
-					Str("event", "subscription_guard_missing_organization_context").
+					Str("event", "subscription_guard_missing_identity").
 					Str("path", c.Path()).
 					Msg("subscription guard ran without an authenticated organization, RequireAuth must run before it")
 
 				return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 			}
 
-			organization, err := orgs.FindByID(ctx, organizationID)
+			organization, err := orgs.FindByID(ctx, identity.CurrentOrganizationID)
 			if err != nil {
 				if errors.Is(err, orgdomain.ErrOrganizationNotFound) {
 					logger.Warn().
@@ -82,18 +74,4 @@ func SubscriptionGuard(orgs orgdomain.OrganizationRepository, policy orgdomain.O
 			return next(c)
 		}
 	}
-}
-
-func authenticatedOrganizationID(c echo.Context) (pgtype.UUID, error) {
-	raw, ok := c.Get(ContextKeyOrganizationID).(string)
-	if !ok || raw == "" {
-		return pgtype.UUID{}, errNoOrganizationContext
-	}
-
-	var id pgtype.UUID
-	if err := id.Scan(raw); err != nil {
-		return pgtype.UUID{}, fmt.Errorf("%w: %q", errUnparsableOrganizationContext, raw)
-	}
-
-	return id, nil
 }

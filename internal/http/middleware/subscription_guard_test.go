@@ -56,26 +56,29 @@ type guardedCall struct {
 	body    string
 }
 
-type organizationOnContext struct {
-	set   bool
-	value any
+type guardIdentity struct {
+	set      bool
+	identity Identity
 }
 
-func authenticated(id string) organizationOnContext {
-	return organizationOnContext{set: true, value: id}
+func authenticated(t *testing.T, organizationID string) guardIdentity {
+	t.Helper()
+
+	return guardIdentity{set: true, identity: Identity{CurrentOrganizationID: mustUUID(t, organizationID)}}
 }
 
-func serveWithGuard(t *testing.T, identity organizationOnContext, orgs orgdomain.OrganizationRepository) guardedCall {
+func serveWithGuard(t *testing.T, identity guardIdentity, orgs orgdomain.OrganizationRepository) guardedCall {
 	t.Helper()
 
 	e := echo.New()
 
-	rec := httptest.NewRecorder()
-	c := e.NewContext(httptest.NewRequest(http.MethodPost, "/patients", nil), rec)
-
+	request := httptest.NewRequest(http.MethodPost, "/patients", nil)
 	if identity.set {
-		c.Set(ContextKeyOrganizationID, identity.value)
+		request = request.WithContext(WithIdentity(request.Context(), identity.identity))
 	}
+
+	rec := httptest.NewRecorder()
+	c := e.NewContext(request, rec)
 
 	result := guardedCall{}
 
@@ -134,7 +137,7 @@ func TestSubscriptionGuardAllowsOrganizationsThatMayOperate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			orgs := &guardOrganizationRepository{organization: organization(t, tt.status, tt.trialEndsAt)}
 
-			call := serveWithGuard(t, authenticated(guardOrganizationID), orgs)
+			call := serveWithGuard(t, authenticated(t, guardOrganizationID), orgs)
 
 			assert.True(t, call.reached, "an entitled organization must reach the handler")
 			assert.Equal(t, http.StatusOK, call.code)
@@ -187,7 +190,7 @@ func TestSubscriptionGuardBlocksOrganizationsThatMayNotOperate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			orgs := &guardOrganizationRepository{organization: organization(t, tt.status, tt.trialEndsAt)}
 
-			call := serveWithGuard(t, authenticated(guardOrganizationID), orgs)
+			call := serveWithGuard(t, authenticated(t, guardOrganizationID), orgs)
 
 			assert.False(t, call.reached, "a blocked organization must not reach the handler")
 			assert.Equal(t, http.StatusPaymentRequired, call.code)
@@ -208,7 +211,7 @@ func TestSubscriptionGuardLoadsTheOrganizationFromTheToken(t *testing.T) {
 		organization: organization(t, orgdomain.Active, time.Now().UTC()),
 	}
 
-	serveWithGuard(t, authenticated(guardOrganizationID), orgs)
+	serveWithGuard(t, authenticated(t, guardOrganizationID), orgs)
 
 	var expected pgtype.UUID
 	require.NoError(t, expected.Scan(guardOrganizationID))
@@ -219,7 +222,7 @@ func TestSubscriptionGuardLoadsTheOrganizationFromTheToken(t *testing.T) {
 func TestSubscriptionGuardRejectsAnUnknownOrganization(t *testing.T) {
 	orgs := &guardOrganizationRepository{findErr: orgdomain.ErrOrganizationNotFound}
 
-	call := serveWithGuard(t, authenticated(guardOrganizationID), orgs)
+	call := serveWithGuard(t, authenticated(t, guardOrganizationID), orgs)
 
 	assert.False(t, call.reached)
 	assert.Equal(t, http.StatusNotFound, call.code)
@@ -228,7 +231,7 @@ func TestSubscriptionGuardRejectsAnUnknownOrganization(t *testing.T) {
 func TestSubscriptionGuardFailsClosedOnARepositoryError(t *testing.T) {
 	orgs := &guardOrganizationRepository{findErr: errors.New("postgres: connection refused")}
 
-	call := serveWithGuard(t, authenticated(guardOrganizationID), orgs)
+	call := serveWithGuard(t, authenticated(t, guardOrganizationID), orgs)
 
 	assert.False(t, call.reached, "an unverifiable subscription must never be treated as valid")
 	assert.Equal(t, http.StatusInternalServerError, call.code)
@@ -237,27 +240,15 @@ func TestSubscriptionGuardFailsClosedOnARepositoryError(t *testing.T) {
 func TestSubscriptionGuardFailsClosedWithoutAnAuthenticatedOrganization(t *testing.T) {
 	tests := []struct {
 		name     string
-		identity organizationOnContext
+		identity guardIdentity
 	}{
 		{
 			name:     "RequireAuth never ran",
-			identity: organizationOnContext{},
+			identity: guardIdentity{},
 		},
 		{
 			name:     "RequireAuth rejected the request",
-			identity: organizationOnContext{set: true, value: nil},
-		},
-		{
-			name:     "empty organization id",
-			identity: authenticated(""),
-		},
-		{
-			name:     "organization id is not a string",
-			identity: organizationOnContext{set: true, value: 42},
-		},
-		{
-			name:     "organization id is not a uuid",
-			identity: authenticated("not-a-uuid"),
+			identity: guardIdentity{},
 		},
 	}
 
@@ -281,57 +272,52 @@ func TestSubscriptionGuardNeverAnswersForbidden(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		identity organizationOnContext
+		identity guardIdentity
 		orgs     *guardOrganizationRepository
 	}{
 		{
 			name:     "active",
-			identity: authenticated(guardOrganizationID),
+			identity: authenticated(t, guardOrganizationID),
 			orgs:     &guardOrganizationRepository{organization: organization(t, orgdomain.Active, now)},
 		},
 		{
 			name:     "trialing",
-			identity: authenticated(guardOrganizationID),
+			identity: authenticated(t, guardOrganizationID),
 			orgs:     &guardOrganizationRepository{organization: organization(t, orgdomain.Trialing, now.Add(time.Hour))},
 		},
 		{
 			name:     "trial expired",
-			identity: authenticated(guardOrganizationID),
+			identity: authenticated(t, guardOrganizationID),
 			orgs:     &guardOrganizationRepository{organization: organization(t, orgdomain.Trialing, now.Add(-time.Hour))},
 		},
 		{
 			name:     "suspended",
-			identity: authenticated(guardOrganizationID),
+			identity: authenticated(t, guardOrganizationID),
 			orgs:     &guardOrganizationRepository{organization: organization(t, orgdomain.Suspended, now)},
 		},
 		{
 			name:     "past due",
-			identity: authenticated(guardOrganizationID),
+			identity: authenticated(t, guardOrganizationID),
 			orgs:     &guardOrganizationRepository{organization: organization(t, orgdomain.PastDue, now)},
 		},
 		{
 			name:     "canceled",
-			identity: authenticated(guardOrganizationID),
+			identity: authenticated(t, guardOrganizationID),
 			orgs:     &guardOrganizationRepository{organization: organization(t, orgdomain.Canceled, now)},
 		},
 		{
 			name:     "organization not found",
-			identity: authenticated(guardOrganizationID),
+			identity: authenticated(t, guardOrganizationID),
 			orgs:     &guardOrganizationRepository{findErr: orgdomain.ErrOrganizationNotFound},
 		},
 		{
 			name:     "repository failure",
-			identity: authenticated(guardOrganizationID),
+			identity: authenticated(t, guardOrganizationID),
 			orgs:     &guardOrganizationRepository{findErr: errors.New("postgres: connection refused")},
 		},
 		{
 			name:     "no authenticated organization",
-			identity: organizationOnContext{},
-			orgs:     &guardOrganizationRepository{},
-		},
-		{
-			name:     "malformed organization id",
-			identity: authenticated("not-a-uuid"),
+			identity: guardIdentity{},
 			orgs:     &guardOrganizationRepository{},
 		},
 	}

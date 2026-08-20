@@ -60,30 +60,32 @@ type permittedCall struct {
 	body    string
 }
 
-type identityOnContext struct {
-	userSet   bool
-	userValue any
-
-	organizationSet   bool
-	organizationValue any
+type permissionIdentity struct {
+	set      bool
+	identity Identity
 }
 
-func authenticatedIn(userID, organizationID string) identityOnContext {
-	return identityOnContext{
-		userSet:           true,
-		userValue:         userID,
-		organizationSet:   true,
-		organizationValue: organizationID,
+func authenticatedIn(t *testing.T, userID, organizationID string) permissionIdentity {
+	t.Helper()
+
+	return permissionIdentity{
+		set: true,
+		identity: Identity{
+			CurrentUserID:         mustUUID(t, userID),
+			CurrentOrganizationID: mustUUID(t, organizationID),
+		},
 	}
 }
 
-func validIdentity() identityOnContext {
-	return authenticatedIn(permissionUserID, permissionOrganizationID)
+func validIdentity(t *testing.T) permissionIdentity {
+	t.Helper()
+
+	return authenticatedIn(t, permissionUserID, permissionOrganizationID)
 }
 
 func serveWithRequireOrganizationPermission(
 	t *testing.T,
-	identity identityOnContext,
+	identity permissionIdentity,
 	memberships orgdomain.MembershipRepository,
 	check PermissionCheck,
 ) permittedCall {
@@ -91,16 +93,13 @@ func serveWithRequireOrganizationPermission(
 
 	e := echo.New()
 
+	request := httptest.NewRequest(http.MethodPost, "/patients", nil)
+	if identity.set {
+		request = request.WithContext(WithIdentity(request.Context(), identity.identity))
+	}
+
 	rec := httptest.NewRecorder()
-	c := e.NewContext(httptest.NewRequest(http.MethodPost, "/patients", nil), rec)
-
-	if identity.userSet {
-		c.Set(ContextKeyUserID, identity.userValue)
-	}
-
-	if identity.organizationSet {
-		c.Set(ContextKeyOrganizationID, identity.organizationValue)
-	}
+	c := e.NewContext(request, rec)
 
 	result := permittedCall{}
 
@@ -180,7 +179,7 @@ func TestRequireOrganizationPermissionEnforcesThePolicyTruthTable(t *testing.T) 
 		t.Run(tt.name, func(t *testing.T) {
 			memberships := &permissionMembershipRepository{membership: membershipWithRole(t, tt.role)}
 
-			call := serveWithRequireOrganizationPermission(t, validIdentity(), memberships, tt.check)
+			call := serveWithRequireOrganizationPermission(t, validIdentity(t), memberships, tt.check)
 
 			assert.Equal(t, 1, memberships.findCalls, "the membership must be resolved exactly once")
 
@@ -203,7 +202,7 @@ func TestRequireOrganizationPermissionScopesTheLookupToBothIdentities(t *testing
 		membership: membershipWithRole(t, orgdomain.RoleManager),
 	}
 
-	serveWithRequireOrganizationPermission(t, validIdentity(), memberships, RequireCanManageBilling)
+	serveWithRequireOrganizationPermission(t, validIdentity(t), memberships, RequireCanManageBilling)
 
 	var expectedUserID, expectedOrganizationID pgtype.UUID
 	require.NoError(t, expectedUserID.Scan(permissionUserID))
@@ -216,7 +215,7 @@ func TestRequireOrganizationPermissionScopesTheLookupToBothIdentities(t *testing
 func TestRequireOrganizationPermissionForbidsANonMember(t *testing.T) {
 	memberships := &permissionMembershipRepository{findErr: orgdomain.ErrMembershipNotFound}
 
-	call := serveWithRequireOrganizationPermission(t, validIdentity(), memberships, RequireCanViewOrganization)
+	call := serveWithRequireOrganizationPermission(t, validIdentity(t), memberships, RequireCanViewOrganization)
 
 	assert.False(t, call.reached, "a non-member must not reach the handler")
 	assert.Equal(t, http.StatusForbidden, call.code)
@@ -230,7 +229,7 @@ func TestRequireOrganizationPermissionForbidsAWrappedMembershipNotFound(t *testi
 		findErr: errors.Join(errors.New("querying memberships"), orgdomain.ErrMembershipNotFound),
 	}
 
-	call := serveWithRequireOrganizationPermission(t, validIdentity(), memberships, RequireCanViewOrganization)
+	call := serveWithRequireOrganizationPermission(t, validIdentity(t), memberships, RequireCanViewOrganization)
 
 	assert.False(t, call.reached)
 	assert.Equal(t, http.StatusForbidden, call.code)
@@ -239,7 +238,7 @@ func TestRequireOrganizationPermissionForbidsAWrappedMembershipNotFound(t *testi
 func TestRequireOrganizationPermissionFailsClosedOnARepositoryError(t *testing.T) {
 	memberships := &permissionMembershipRepository{findErr: errors.New("postgres: connection refused")}
 
-	call := serveWithRequireOrganizationPermission(t, validIdentity(), memberships, RequireCanViewOrganization)
+	call := serveWithRequireOrganizationPermission(t, validIdentity(t), memberships, RequireCanViewOrganization)
 
 	assert.False(t, call.reached, "an unverifiable role must never be treated as permitted")
 	assert.Equal(t, http.StatusInternalServerError, call.code)
@@ -250,74 +249,15 @@ func TestRequireOrganizationPermissionFailsClosedOnARepositoryError(t *testing.T
 func TestRequireOrganizationPermissionFailsClosedWithoutAnAuthenticatedIdentity(t *testing.T) {
 	tests := []struct {
 		name     string
-		identity identityOnContext
+		identity permissionIdentity
 	}{
 		{
 			name:     "RequireAuth never ran",
-			identity: identityOnContext{},
+			identity: permissionIdentity{},
 		},
 		{
-			name: "RequireAuth rejected the request",
-			identity: identityOnContext{
-				userSet: true, userValue: nil,
-				organizationSet: true, organizationValue: nil,
-			},
-		},
-		{
-			name: "no user on the context",
-			identity: identityOnContext{
-				organizationSet: true, organizationValue: permissionOrganizationID,
-			},
-		},
-		{
-			name: "nil user id",
-			identity: identityOnContext{
-				userSet: true, userValue: nil,
-				organizationSet: true, organizationValue: permissionOrganizationID,
-			},
-		},
-		{
-			name:     "empty user id",
-			identity: authenticatedIn("", permissionOrganizationID),
-		},
-		{
-			name: "user id is not a string",
-			identity: identityOnContext{
-				userSet: true, userValue: 42,
-				organizationSet: true, organizationValue: permissionOrganizationID,
-			},
-		},
-		{
-			name:     "user id is not a uuid",
-			identity: authenticatedIn("not-a-uuid", permissionOrganizationID),
-		},
-		{
-			name: "no organization on the context",
-			identity: identityOnContext{
-				userSet: true, userValue: permissionUserID,
-			},
-		},
-		{
-			name: "nil organization id",
-			identity: identityOnContext{
-				userSet: true, userValue: permissionUserID,
-				organizationSet: true, organizationValue: nil,
-			},
-		},
-		{
-			name:     "empty organization id",
-			identity: authenticatedIn(permissionUserID, ""),
-		},
-		{
-			name: "organization id is not a string",
-			identity: identityOnContext{
-				userSet: true, userValue: permissionUserID,
-				organizationSet: true, organizationValue: 42,
-			},
-		},
-		{
-			name:     "organization id is not a uuid",
-			identity: authenticatedIn(permissionUserID, "not-a-uuid"),
+			name:     "RequireAuth rejected the request",
+			identity: permissionIdentity{},
 		},
 	}
 
@@ -339,49 +279,37 @@ func TestRequireOrganizationPermissionFailsClosedWithoutAnAuthenticatedIdentity(
 func TestRequireOrganizationPermissionNeverAnswersPaymentRequired(t *testing.T) {
 	tests := []struct {
 		name        string
-		identity    identityOnContext
+		identity    permissionIdentity
 		memberships *permissionMembershipRepository
 		check       PermissionCheck
 	}{
 		{
 			name:        "permitted",
-			identity:    validIdentity(),
+			identity:    validIdentity(t),
 			memberships: &permissionMembershipRepository{membership: membershipWithRole(t, orgdomain.RoleManager)},
 			check:       RequireCanManageBilling,
 		},
 		{
 			name:        "denied",
-			identity:    validIdentity(),
+			identity:    validIdentity(t),
 			memberships: &permissionMembershipRepository{membership: membershipWithRole(t, orgdomain.RoleMember)},
 			check:       RequireCanManageBilling,
 		},
 		{
 			name:        "not a member",
-			identity:    validIdentity(),
+			identity:    validIdentity(t),
 			memberships: &permissionMembershipRepository{findErr: orgdomain.ErrMembershipNotFound},
 			check:       RequireCanViewOrganization,
 		},
 		{
 			name:        "repository failure",
-			identity:    validIdentity(),
+			identity:    validIdentity(t),
 			memberships: &permissionMembershipRepository{findErr: errors.New("postgres: connection refused")},
 			check:       RequireCanViewOrganization,
 		},
 		{
 			name:        "no authenticated identity",
-			identity:    identityOnContext{},
-			memberships: &permissionMembershipRepository{},
-			check:       RequireCanViewOrganization,
-		},
-		{
-			name:        "malformed user id",
-			identity:    authenticatedIn("not-a-uuid", permissionOrganizationID),
-			memberships: &permissionMembershipRepository{},
-			check:       RequireCanViewOrganization,
-		},
-		{
-			name:        "malformed organization id",
-			identity:    authenticatedIn(permissionUserID, "not-a-uuid"),
+			identity:    permissionIdentity{},
 			memberships: &permissionMembershipRepository{},
 			check:       RequireCanViewOrganization,
 		},
