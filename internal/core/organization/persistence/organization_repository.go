@@ -12,13 +12,13 @@ import (
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
 )
 
-const createOrganization = `INSERT INTO organizations(name, trial_starts_at, trial_ends_at, subscription_status, plan_id)
-VALUES($1, $2, $3, $4, $5) RETURNING id`
+const createOrganization = `INSERT INTO organizations(name, trial_starts_at, trial_ends_at, subscription_status, plan_id, industry_id, number_of_employees)
+VALUES($1, $2, $3, $4, $5, $6, $7) RETURNING id`
 
-const findOrganizationByID = `SELECT id, name, created_at, updated_at, trial_starts_at, trial_ends_at, subscription_status, plan_id
+const findOrganizationByID = `SELECT id, name, created_at, updated_at, trial_starts_at, trial_ends_at, subscription_status, plan_id, industry_id, number_of_employees
 FROM organizations WHERE id = $1`
 
-const findExpiredTrials = `SELECT id, name, created_at, updated_at, trial_starts_at, trial_ends_at, subscription_status, plan_id
+const findExpiredTrials = `SELECT id, name, created_at, updated_at, trial_starts_at, trial_ends_at, subscription_status, plan_id, industry_id, number_of_employees
 FROM organizations WHERE subscription_status = $1 AND trial_ends_at < $2 ORDER BY trial_ends_at LIMIT $3`
 
 const updateOrganizationSubscriptionStatus = `UPDATE organizations SET subscription_status = $1, updated_at = now() WHERE id = $2`
@@ -34,6 +34,7 @@ func NewOrganizationRepository(db database.DBTX) *OrganizationRepository {
 func (r *OrganizationRepository) Create(ctx context.Context, org *domain.Organization) error {
 	return r.db.QueryRow(ctx, createOrganization,
 		org.Name, org.TrialStartsAt, org.TrialEndsAt, org.SubscriptionStatus, org.PlanID,
+		org.IndustryID, org.NumberOfEmployees,
 	).Scan(&org.Id)
 }
 
@@ -43,6 +44,7 @@ func (r *OrganizationRepository) FindByID(ctx context.Context, id pgtype.UUID) (
 	err := r.db.QueryRow(ctx, findOrganizationByID, id).Scan(
 		&org.Id, &org.Name, &org.CreatedAt, &org.UpdatedAt,
 		&org.TrialStartsAt, &org.TrialEndsAt, &org.SubscriptionStatus, &org.PlanID,
+		&org.IndustryID, &org.NumberOfEmployees,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -73,6 +75,7 @@ func (r *OrganizationRepository) FindExpiredTrials(ctx context.Context, now time
 		if err := row.Scan(
 			&org.Id, &org.Name, &org.CreatedAt, &org.UpdatedAt,
 			&org.TrialStartsAt, &org.TrialEndsAt, &org.SubscriptionStatus, &org.PlanID,
+			&org.IndustryID, &org.NumberOfEmployees,
 		); err != nil {
 			return nil, err
 		}

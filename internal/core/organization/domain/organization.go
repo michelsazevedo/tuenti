@@ -16,6 +16,8 @@ type Organization struct {
 	TrialEndsAt        time.Time          `json:"trial_ends_at"`
 	SubscriptionStatus SubscriptionStatus `json:"subscription_status"`
 	PlanID             pgtype.UUID        `json:"plan_id"`
+	IndustryID         pgtype.UUID        `json:"industry_id"`
+	NumberOfEmployees  int                `json:"number_of_employees"`
 }
 
 const trialDuration = 14 * 24 * time.Hour

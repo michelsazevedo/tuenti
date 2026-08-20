@@ -4,10 +4,12 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/labstack/echo/v4"
 
 	"github.com/michelsazevedo/tuenti/internal/core/identity/application"
 	"github.com/michelsazevedo/tuenti/internal/core/identity/domain"
+	orgdomain "github.com/michelsazevedo/tuenti/internal/core/organization/domain"
 )
 
 type AuthzHandler interface {
@@ -65,17 +67,40 @@ func (h *authzHandler) Signup(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnprocessableEntity, err.Error())
 	}
 
+	org, err := toSignupOrganization(req.Organization)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, "invalid organization")
+	}
+
 	user := req.ToDomain()
 
-	if err := h.signup.SignUp(c.Request().Context(), user, req.OrganizationName); err != nil {
+	if err := h.signup.SignUp(c.Request().Context(), user, org); err != nil {
 		if errors.Is(err, domain.ErrUserAlreadyExists) {
 			return echo.NewHTTPError(http.StatusConflict, "user already exists")
+		}
+
+		if errors.Is(err, orgdomain.ErrIndustryNotFound) {
+			return echo.NewHTTPError(http.StatusUnprocessableEntity, "industry not found")
 		}
 
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
 	return c.JSON(http.StatusCreated, NewUserResponse(user))
+}
+
+func toSignupOrganization(o OrganizationRequest) (application.SignupOrganization, error) {
+	var industryID pgtype.UUID
+
+	if err := industryID.Scan(o.IndustryID); err != nil {
+		return application.SignupOrganization{}, err
+	}
+
+	return application.SignupOrganization{
+		Name:              o.Name,
+		IndustryID:        industryID,
+		NumberOfEmployees: o.NumberOfEmployees,
+	}, nil
 }
 
 func (h *authzHandler) Signin(c echo.Context) error {

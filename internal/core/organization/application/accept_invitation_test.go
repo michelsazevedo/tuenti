@@ -46,6 +46,27 @@ func acceptInvitationRandomSuffix(t *testing.T) string {
 	return hex.EncodeToString(buf)
 }
 
+func acceptInvitationTestIndustry(t *testing.T, pool *pgxpool.Pool) pgtype.UUID {
+	t.Helper()
+
+	suffix := acceptInvitationRandomSuffix(t)
+
+	var id pgtype.UUID
+
+	ctx := context.Background()
+	err := pool.QueryRow(ctx,
+		`INSERT INTO industries(name, slug) VALUES($1, $2) RETURNING id`,
+		"Aerospace "+suffix, "aerospace_"+suffix,
+	).Scan(&id)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM industries WHERE id = $1`, id)
+	})
+
+	return id
+}
+
 func acceptInvitationTestContext(t *testing.T) context.Context {
 	t.Helper()
 
@@ -102,7 +123,11 @@ func newAcceptInvitationFixture(t *testing.T) *acceptInvitationFixture {
 	ctx := acceptInvitationTestContext(t)
 	suffix := acceptInvitationRandomSuffix(t)
 
-	organization := &domain.Organization{Name: "Acme " + suffix}
+	organization := &domain.Organization{
+		Name:              "Acme " + suffix,
+		IndustryID:        acceptInvitationTestIndustry(t, pool),
+		NumberOfEmployees: 10,
+	}
 	organization.StartTrial(time.Now().UTC())
 	require.NoError(t, persistence.NewOrganizationRepository(pool).Create(ctx, organization),
 		"the fixture organization must be seeded")

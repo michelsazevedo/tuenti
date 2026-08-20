@@ -14,6 +14,10 @@ type OrganizationRepository interface {
 	UpdateSubscriptionStatus(ctx context.Context, id pgtype.UUID, status SubscriptionStatus) error
 }
 
+type IndustryRepository interface {
+	Exists(ctx context.Context, id pgtype.UUID) (bool, error)
+}
+
 type MembershipRepository interface {
 	Create(ctx context.Context, membership *Membership) error
 	FindByUserID(ctx context.Context, userID pgtype.UUID) (*Membership, error)

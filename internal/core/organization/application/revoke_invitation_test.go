@@ -73,6 +73,27 @@ func revokeInvitationRandomSuffix(t *testing.T) string {
 	return hex.EncodeToString(buf)
 }
 
+func revokeInvitationTestIndustry(t *testing.T, pool *pgxpool.Pool) pgtype.UUID {
+	t.Helper()
+
+	suffix := revokeInvitationRandomSuffix(t)
+
+	var id pgtype.UUID
+
+	ctx := context.Background()
+	err := pool.QueryRow(ctx,
+		`INSERT INTO industries(name, slug) VALUES($1, $2) RETURNING id`,
+		"Aerospace "+suffix, "aerospace_"+suffix,
+	).Scan(&id)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM industries WHERE id = $1`, id)
+	})
+
+	return id
+}
+
 func revokeInvitationTestContext(t *testing.T) context.Context {
 	t.Helper()
 
@@ -107,7 +128,11 @@ func newRevokeInvitationOrg(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 
 	suffix := revokeInvitationRandomSuffix(t)
 
-	org := &domain.Organization{Name: "Acme " + suffix}
+	org := &domain.Organization{
+		Name:              "Acme " + suffix,
+		IndustryID:        revokeInvitationTestIndustry(t, pool),
+		NumberOfEmployees: 10,
+	}
 	org.StartTrial(time.Now().UTC())
 
 	require.NoError(t, persistence.NewOrganizationRepository(pool).Create(ctx, org),
@@ -230,7 +255,7 @@ func (o *revokeInvitationOrg) cleanup(t *testing.T) {
 
 func newRevokeInvitationUseCase(pgConn *database.PgConn) RevokeInvitationUseCase {
 	return NewRevokeInvitation(
-		database.NewUnitOfWork(pgConn),
+		persistence.NewInvitationRepository(pgConn.Pool()),
 		NewMembershipAuthorizationService(persistence.NewMembershipRepository(pgConn.Pool())),
 	)
 }

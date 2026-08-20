@@ -6,6 +6,7 @@ import (
 	"github.com/labstack/echo/v4"
 	goredis "github.com/redis/go-redis/v9"
 
+	catalogapi "github.com/michelsazevedo/tuenti/internal/core/catalog/api"
 	"github.com/michelsazevedo/tuenti/internal/core/identity/api"
 	orgapi "github.com/michelsazevedo/tuenti/internal/core/organization/api"
 	orgdomain "github.com/michelsazevedo/tuenti/internal/core/organization/domain"
@@ -24,6 +25,7 @@ func RegisterRoutes(
 	authz api.AuthzHandler,
 	org orgapi.OrganizationHandler,
 	inv orgapi.InvitationHandler,
+	item catalogapi.ItemHandler,
 ) {
 	requireAuth := m.RequireAuth(cfg.Settings.Secret, cfg.Settings.Environment)
 	requireManagerOrAdmin := m.RequireOrganizationPermission(memberships, orgdomain.AuthorizationPolicy{}, m.RequireCanManageMembers)
@@ -79,4 +81,11 @@ func RegisterRoutes(
 	organizations.DELETE("/:organizationId/invitations/:id", inv.Revoke, requireAuth, requireManagerOrAdmin)
 
 	e.POST("/invitations/accept", inv.Accept, acceptInvitationLimit)
+
+	items := e.Group("/items", requireAuth)
+	items.POST("", item.Create, requireManagerOrAdmin)
+	items.GET("", item.List)
+	items.GET("/:id", item.Get)
+	items.PUT("/:id", item.Update, requireManagerOrAdmin)
+	items.DELETE("/:id", item.Delete, requireManagerOrAdmin)
 }

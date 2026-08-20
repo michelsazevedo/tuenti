@@ -19,13 +19,15 @@ import (
 	"github.com/michelsazevedo/tuenti/internal/core/identity/domain"
 	"github.com/michelsazevedo/tuenti/internal/core/identity/persistence"
 	orgdomain "github.com/michelsazevedo/tuenti/internal/core/organization/domain"
+	orgpersistence "github.com/michelsazevedo/tuenti/internal/core/organization/persistence"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/config"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
 )
 
 const (
-	signupTestTimeout    = 10 * time.Second
-	signupConfirmBaseURL = "https://app.example.com/confirm-email"
+	signupTestTimeout       = 10 * time.Second
+	signupConfirmBaseURL    = "https://app.example.com/confirm-email"
+	signupTestEmployeeCount = 10
 )
 
 type recordingConfirmationEventPublisher struct {
@@ -74,6 +76,7 @@ func newSignup(
 	return NewSignup(
 		database.NewUnitOfWork(pgConn),
 		publisher,
+		orgpersistence.NewIndustryRepository(pgConn.Pool()),
 		&config.Config{Settings: config.Settings{EmailConfirmationBaseURL: signupConfirmBaseURL}},
 	)
 }
@@ -124,6 +127,44 @@ func deleteSignupRows(t *testing.T, pool *pgxpool.Pool, userID, organizationID, 
 		if _, err := pool.Exec(ctx, statement.sql, statement.id); err != nil {
 			t.Errorf("cleanup failed for %q: %v", statement.sql, err)
 		}
+	}
+}
+
+func createTestIndustry(t *testing.T, pool *pgxpool.Pool) pgtype.UUID {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), signupTestTimeout)
+	defer cancel()
+
+	suffix := randomSuffix(t)
+
+	var id pgtype.UUID
+
+	err := pool.QueryRow(ctx,
+		`INSERT INTO industries(name, slug) VALUES($1, $2) RETURNING id`,
+		"Aerospace "+suffix, "aerospace_"+suffix,
+	).Scan(&id)
+	require.NoError(t, err, "the test industry must be insertable")
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), signupTestTimeout)
+		defer cancel()
+
+		if _, err := pool.Exec(ctx, `DELETE FROM industries WHERE id = $1`, id); err != nil {
+			t.Errorf("cleanup of the test industry failed: %v", err)
+		}
+	})
+
+	return id
+}
+
+func newSignupOrganization(t *testing.T, pool *pgxpool.Pool, suffix string) SignupOrganization {
+	t.Helper()
+
+	return SignupOrganization{
+		Name:              "Acme " + suffix,
+		IndustryID:        createTestIndustry(t, pool),
+		NumberOfEmployees: signupTestEmployeeCount,
 	}
 }
 
@@ -190,6 +231,16 @@ func setDefaultEnv(t *testing.T, key, value string) {
 	}
 }
 
+func randomUUID(t *testing.T) pgtype.UUID {
+	t.Helper()
+
+	id := pgtype.UUID{Valid: true}
+	_, err := rand.Read(id.Bytes[:])
+	require.NoError(t, err)
+
+	return id
+}
+
 func randomSuffix(t *testing.T) string {
 	t.Helper()
 
@@ -220,20 +271,33 @@ func TestSignUpCreatesUserOrganizationAndOwnerMembership(t *testing.T) {
 		Email:    "wile." + suffix + "@example.com",
 		Password: "supersecret",
 	}
-	organizationName := "Acme " + suffix
+	org := newSignupOrganization(t, pool, suffix)
 
 	require.NoError(t, newSignup(pgConn, &recordingConfirmationEventPublisher{}).
-		SignUp(ctx, user, organizationName))
+		SignUp(ctx, user, org))
 
 	require.True(t, user.Id.Valid, "the user id must be returned by the insert")
 
-	membership := requireOwnerMembership(t, pool, user.Id, organizationName)
+	membership := requireOwnerMembership(t, pool, user.Id, org.Name)
 
 	t.Cleanup(func() {
 		deleteSignupRows(t, pool, user.Id, membership.organizationID, membership.id)
 	})
 
 	assert.Equal(t, orgdomain.RoleManager, membership.role, "the first membership must own the organization")
+
+	var (
+		industryID        pgtype.UUID
+		numberOfEmployees int
+	)
+
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT industry_id, number_of_employees FROM organizations WHERE id = $1`,
+		membership.organizationID).Scan(&industryID, &numberOfEmployees))
+
+	assert.Equal(t, org.IndustryID, industryID, "the organization must reference the submitted industry")
+	assert.Equal(t, org.NumberOfEmployees, numberOfEmployees,
+		"the organization must store the submitted employee count")
 
 	var memberships int
 	require.NoError(t, pool.QueryRow(ctx,
@@ -255,14 +319,14 @@ func TestSignUpCreatesAConfirmationTokenAndPublishesTheConfirmationEvent(t *test
 		Email:    "marvin." + suffix + "@example.com",
 		Password: "supersecret",
 	}
-	organizationName := "Acme " + suffix
+	org := newSignupOrganization(t, pool, suffix)
 
 	publisher := &recordingConfirmationEventPublisher{}
 
-	require.NoError(t, newSignup(pgConn, publisher).SignUp(ctx, user, organizationName))
+	require.NoError(t, newSignup(pgConn, publisher).SignUp(ctx, user, org))
 	require.True(t, user.Id.Valid, "the user id must be returned by the insert")
 
-	membership := requireOwnerMembership(t, pool, user.Id, organizationName)
+	membership := requireOwnerMembership(t, pool, user.Id, org.Name)
 
 	t.Cleanup(func() {
 		deleteSignupRows(t, pool, user.Id, membership.organizationID, membership.id)
@@ -313,15 +377,15 @@ func TestSignUpSucceedsEvenWhenTheConfirmationEventFailsToPublish(t *testing.T) 
 		Email:    "elmer." + suffix + "@example.com",
 		Password: "supersecret",
 	}
-	organizationName := "Acme " + suffix
+	org := newSignupOrganization(t, pool, suffix)
 
 	publisher := &recordingConfirmationEventPublisher{publishErr: errors.New("kafka unavailable")}
 
-	require.NoError(t, newSignup(pgConn, publisher).SignUp(ctx, user, organizationName),
+	require.NoError(t, newSignup(pgConn, publisher).SignUp(ctx, user, org),
 		"a failing event publisher must not fail the signup")
 	require.True(t, user.Id.Valid, "the user id must be returned by the insert")
 
-	membership := requireOwnerMembership(t, pool, user.Id, organizationName)
+	membership := requireOwnerMembership(t, pool, user.Id, org.Name)
 
 	t.Cleanup(func() {
 		deleteSignupRows(t, pool, user.Id, membership.organizationID, membership.id)
@@ -349,13 +413,13 @@ func TestSignUpRollsBackEverythingWhenTheMembershipInsertFails(t *testing.T) {
 		Email:    "road." + suffix + "@example.com",
 		Password: "supersecret",
 	}
-	organizationName := "Acme " + suffix
+	org := newSignupOrganization(t, pool, suffix)
 
-	withForcedMembershipInsertFailure(t, pool, organizationName)
+	withForcedMembershipInsertFailure(t, pool, org.Name)
 
 	publisher := &recordingConfirmationEventPublisher{}
 
-	err := newSignup(pgConn, publisher).SignUp(ctx, user, organizationName)
+	err := newSignup(pgConn, publisher).SignUp(ctx, user, org)
 	require.Error(t, err, "a failing membership insert must fail the whole signup")
 
 	assert.Empty(t, publisher.published, "a rolled back signup must never announce a live confirmation link")
@@ -365,8 +429,47 @@ func TestSignUpRollsBackEverythingWhenTheMembershipInsertFails(t *testing.T) {
 
 	var organizations int
 	require.NoError(t, pool.QueryRow(ctx,
-		`SELECT count(*) FROM organizations WHERE name = $1`, organizationName).Scan(&organizations))
+		`SELECT count(*) FROM organizations WHERE name = $1`, org.Name).Scan(&organizations))
 	assert.Zero(t, organizations, "the organization insert must have been rolled back")
+}
+
+func TestSignUpFailsWhenTheIndustryDoesNotExist(t *testing.T) {
+	pgConn := newTestPgConn(t)
+	pool := pgConn.Pool()
+	ctx := testContext(t)
+
+	suffix := randomSuffix(t)
+	user := &domain.User{
+		Name:     "Daffy Duck " + suffix,
+		Email:    "daffy." + suffix + "@example.com",
+		Password: "supersecret",
+	}
+	org := SignupOrganization{
+		Name:              "Acme " + suffix,
+		IndustryID:        randomUUID(t),
+		NumberOfEmployees: signupTestEmployeeCount,
+	}
+
+	publisher := &recordingConfirmationEventPublisher{}
+
+	err := newSignup(pgConn, publisher).SignUp(ctx, user, org)
+	assert.ErrorIs(t, err, orgdomain.ErrIndustryNotFound,
+		"an unknown industry must be rejected as a domain error, not a foreign key violation")
+
+	assert.Empty(t, publisher.published, "a rejected signup must never announce a live confirmation link")
+
+	_, err = persistence.NewUserRepository(pool).FindByEmail(ctx, user.Email)
+	assert.ErrorIs(t, err, domain.ErrUserNotFound, "the user must never be inserted")
+
+	var users int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT count(*) FROM users WHERE email = $1`, user.Email).Scan(&users))
+	assert.Zero(t, users, "no user row may survive a rejected signup")
+
+	var organizations int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT count(*) FROM organizations WHERE name = $1`, org.Name).Scan(&organizations))
+	assert.Zero(t, organizations, "no organization row may survive a rejected signup")
 }
 
 func withForcedMembershipInsertFailure(t *testing.T, pool *pgxpool.Pool, organizationName string) {

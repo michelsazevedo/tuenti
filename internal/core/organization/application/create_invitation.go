@@ -6,15 +6,11 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	identitydomain "github.com/michelsazevedo/tuenti/internal/core/identity/domain"
-	identitypersistence "github.com/michelsazevedo/tuenti/internal/core/identity/persistence"
 	"github.com/michelsazevedo/tuenti/internal/core/organization/domain"
-	"github.com/michelsazevedo/tuenti/internal/core/organization/persistence"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/config"
-	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/observability"
 )
 
@@ -30,23 +26,32 @@ type CreateInvitationUseCase interface {
 }
 
 type createInvitation struct {
-	uow       *database.UnitOfWork
-	authz     MembershipAuthorizationService
-	publisher domain.InvitationEventPublisher
-	baseURL   string
+	organizations domain.OrganizationRepository
+	users         identitydomain.UserRepository
+	memberships   domain.MembershipRepository
+	invitations   domain.InvitationRepository
+	authz         MembershipAuthorizationService
+	publisher     domain.InvitationEventPublisher
+	baseURL       string
 }
 
 func NewCreateInvitation(
-	uow *database.UnitOfWork,
+	organizations domain.OrganizationRepository,
+	users identitydomain.UserRepository,
+	memberships domain.MembershipRepository,
+	invitations domain.InvitationRepository,
 	authz MembershipAuthorizationService,
 	publisher domain.InvitationEventPublisher,
 	conf *config.Config,
 ) CreateInvitationUseCase {
 	return &createInvitation{
-		uow:       uow,
-		authz:     authz,
-		publisher: publisher,
-		baseURL:   conf.Settings.InvitationBaseURL,
+		organizations: organizations,
+		users:         users,
+		memberships:   memberships,
+		invitations:   invitations,
+		authz:         authz,
+		publisher:     publisher,
+		baseURL:       conf.Settings.InvitationBaseURL,
 	}
 }
 
@@ -74,63 +79,49 @@ func (c *createInvitation) CreateInvitation(
 
 	inviterID := authorization.Membership().UserId
 
-	var (
-		invitation       *domain.Invitation
-		organizationName string
-		inviterName      string
-	)
-
-	err = c.uow.Do(ctx, func(tx pgx.Tx) error {
-		organization, err := persistence.NewOrganizationRepository(tx).FindByID(ctx, organizationID)
-		if err != nil {
-			return err
-		}
-
-		organizationName = organization.Name
-
-		inviter, err := identitypersistence.NewUserRepository(tx).FindByID(ctx, inviterID)
-		if err != nil {
-			return err
-		}
-
-		inviterName = inviter.Name
-
-		if err := c.ensureNotAlreadyMember(ctx, tx, email, organizationID); err != nil {
-			return err
-		}
-
-		if err := c.ensureNoPendingInvitation(ctx, tx, email, organizationID); err != nil {
-			return err
-		}
-
-		invitation = &domain.Invitation{
-			OrganizationId:        organizationID,
-			Email:                 email,
-			Role:                  role,
-			TokenDigest:           domain.HashInvitationToken(rawToken),
-			InvitedByMembershipId: authorization.Membership().Id,
-			ExpiresAt:             now.Add(invitationTokenTTL),
-		}
-
-		return persistence.NewInvitationRepository(tx).Create(ctx, invitation)
-	})
+	organization, err := c.organizations.FindByID(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
 
+	inviter, err := c.users.FindByID(ctx, inviterID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := c.ensureNotAlreadyMember(ctx, email, organizationID); err != nil {
+		return nil, err
+	}
+
+	if err := c.ensureNoPendingInvitation(ctx, email, organizationID); err != nil {
+		return nil, err
+	}
+
+	invitation := &domain.Invitation{
+		OrganizationId:        organizationID,
+		Email:                 email,
+		Role:                  role,
+		TokenDigest:           domain.HashInvitationToken(rawToken),
+		InvitedByMembershipId: authorization.Membership().Id,
+		ExpiresAt:             now.Add(invitationTokenTTL),
+	}
+
+	if err := c.invitations.Create(ctx, invitation); err != nil {
+		return nil, err
+	}
+
 	c.logInvitationCreated(ctx, invitation)
-	c.publishInvitationCreated(ctx, invitation, organizationName, inviterID, inviterName, rawToken)
+	c.publishInvitationCreated(ctx, invitation, organization.Name, inviterID, inviter.Name, rawToken)
 
 	return invitation, nil
 }
 
 func (c *createInvitation) ensureNotAlreadyMember(
 	ctx context.Context,
-	tx pgx.Tx,
 	email string,
 	organizationID pgtype.UUID,
 ) error {
-	user, err := identitypersistence.NewUserRepository(tx).FindByEmail(ctx, email)
+	user, err := c.users.FindByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, identitydomain.ErrUserNotFound) {
 			return nil
@@ -139,7 +130,7 @@ func (c *createInvitation) ensureNotAlreadyMember(
 		return err
 	}
 
-	_, err = persistence.NewMembershipRepository(tx).FindByUserAndOrganization(ctx, user.Id, organizationID)
+	_, err = c.memberships.FindByUserAndOrganization(ctx, user.Id, organizationID)
 	if err == nil {
 		return domain.ErrAlreadyMember
 	}
@@ -153,11 +144,10 @@ func (c *createInvitation) ensureNotAlreadyMember(
 
 func (c *createInvitation) ensureNoPendingInvitation(
 	ctx context.Context,
-	tx pgx.Tx,
 	email string,
 	organizationID pgtype.UUID,
 ) error {
-	_, err := persistence.NewInvitationRepository(tx).FindPendingByEmailAndOrganization(ctx, email, organizationID)
+	_, err := c.invitations.FindPendingByEmailAndOrganization(ctx, email, organizationID)
 	if err == nil {
 		return domain.ErrDuplicateInvitation
 	}

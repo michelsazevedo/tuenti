@@ -61,7 +61,10 @@ func newCreateInvitationUseCase(
 	publisher domain.InvitationEventPublisher,
 ) CreateInvitationUseCase {
 	return NewCreateInvitation(
-		database.NewUnitOfWork(pgConn),
+		persistence.NewOrganizationRepository(pgConn.Pool()),
+		identitypersistence.NewUserRepository(pgConn.Pool()),
+		persistence.NewMembershipRepository(pgConn.Pool()),
+		persistence.NewInvitationRepository(pgConn.Pool()),
 		NewMembershipAuthorizationService(persistence.NewMembershipRepository(pgConn.Pool())),
 		publisher,
 		&config.Config{Settings: config.Settings{InvitationBaseURL: createInvitationBaseURL}},
@@ -90,7 +93,11 @@ func newCreateInvitationFixture(t *testing.T, pgConn *database.PgConn, inviterRo
 	ctx := createInvitationTestContext(t)
 	suffix := createInvitationRandomSuffix(t)
 
-	organization := &domain.Organization{Name: "Acme " + suffix}
+	organization := &domain.Organization{
+		Name:              "Acme " + suffix,
+		IndustryID:        createInvitationTestIndustry(t, pgConn.Pool()),
+		NumberOfEmployees: 10,
+	}
 	organization.StartTrial(time.Now().UTC())
 
 	require.NoError(t, persistence.NewOrganizationRepository(pgConn.Pool()).Create(ctx, organization),
@@ -265,6 +272,27 @@ func createInvitationRandomSuffix(t *testing.T) string {
 	require.NoError(t, err)
 
 	return hex.EncodeToString(buf)
+}
+
+func createInvitationTestIndustry(t *testing.T, pool *pgxpool.Pool) pgtype.UUID {
+	t.Helper()
+
+	suffix := createInvitationRandomSuffix(t)
+
+	var id pgtype.UUID
+
+	ctx := context.Background()
+	err := pool.QueryRow(ctx,
+		`INSERT INTO industries(name, slug) VALUES($1, $2) RETURNING id`,
+		"Aerospace "+suffix, "aerospace_"+suffix,
+	).Scan(&id)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM industries WHERE id = $1`, id)
+	})
+
+	return id
 }
 
 func createInvitationTestContext(t *testing.T) context.Context {

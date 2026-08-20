@@ -15,20 +15,23 @@ import (
 
 	"github.com/michelsazevedo/tuenti/internal/core/identity/application"
 	"github.com/michelsazevedo/tuenti/internal/core/identity/domain"
+	orgdomain "github.com/michelsazevedo/tuenti/internal/core/organization/domain"
 )
+
+const validSignupIndustryID = "11111111-1111-1111-1111-111111111111"
 
 type fakeSignupUseCase struct {
 	err error
 
-	calls            int
-	user             *domain.User
-	organizationName string
+	calls        int
+	user         *domain.User
+	organization application.SignupOrganization
 }
 
-func (f *fakeSignupUseCase) SignUp(_ context.Context, user *domain.User, organizationName string) error {
+func (f *fakeSignupUseCase) SignUp(_ context.Context, user *domain.User, org application.SignupOrganization) error {
 	f.calls++
 	f.user = user
-	f.organizationName = organizationName
+	f.organization = org
 
 	if f.err != nil {
 		return f.err
@@ -55,20 +58,26 @@ func callSignup(t *testing.T, signup application.SignupUseCase, body string) *ht
 	return rec
 }
 
-func TestSignupForwardsTheOrganizationNameToTheUseCase(t *testing.T) {
+func TestSignupForwardsTheOrganizationToTheUseCase(t *testing.T) {
 	usecase := &fakeSignupUseCase{}
 
 	rec := callSignup(t, usecase, `{
 		"name": "Wile E. Coyote",
 		"email": "wile@example.com",
 		"password": "supersecret",
-		"organization_name": "Acme Corp"
+		"organization": {
+			"name": "Acme Corp",
+			"industry_id": "`+validSignupIndustryID+`",
+			"number_of_employees": 25
+		}
 	}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code)
 
 	require.Equal(t, 1, usecase.calls)
-	assert.Equal(t, "Acme Corp", usecase.organizationName)
+	assert.Equal(t, "Acme Corp", usecase.organization.Name)
+	assert.Equal(t, 25, usecase.organization.NumberOfEmployees)
+	assert.True(t, usecase.organization.IndustryID.Valid)
 	require.NotNil(t, usecase.user)
 	assert.Equal(t, "wile@example.com", usecase.user.Email)
 	assert.NotContains(t, rec.Body.String(), "Acme Corp", "the signup response shape must stay user-only")
@@ -82,13 +91,50 @@ func TestSignupRejectsMalformedRequests(t *testing.T) {
 	}{
 		{name: "unparseable body", body: `{"name":`, code: http.StatusBadRequest},
 		{
-			name: "missing organization name",
+			name: "missing organization",
 			body: `{"name":"Wile","email":"wile@example.com","password":"supersecret"}`,
 			code: http.StatusUnprocessableEntity,
 		},
 		{
+			name: "missing organization name",
+			body: `{"name":"Wile","email":"wile@example.com","password":"supersecret",` +
+				`"organization":{"industry_id":"` + validSignupIndustryID + `","number_of_employees":10}}`,
+			code: http.StatusUnprocessableEntity,
+		},
+		{
 			name: "empty organization name",
-			body: `{"name":"Wile","email":"wile@example.com","password":"supersecret","organization_name":""}`,
+			body: `{"name":"Wile","email":"wile@example.com","password":"supersecret",` +
+				`"organization":{"name":"","industry_id":"` + validSignupIndustryID + `","number_of_employees":10}}`,
+			code: http.StatusUnprocessableEntity,
+		},
+		{
+			name: "missing industry id",
+			body: `{"name":"Wile","email":"wile@example.com","password":"supersecret",` +
+				`"organization":{"name":"Acme Corp","number_of_employees":10}}`,
+			code: http.StatusUnprocessableEntity,
+		},
+		{
+			name: "malformed industry id",
+			body: `{"name":"Wile","email":"wile@example.com","password":"supersecret",` +
+				`"organization":{"name":"Acme Corp","industry_id":"not-a-uuid","number_of_employees":10}}`,
+			code: http.StatusUnprocessableEntity,
+		},
+		{
+			name: "missing number of employees",
+			body: `{"name":"Wile","email":"wile@example.com","password":"supersecret",` +
+				`"organization":{"name":"Acme Corp","industry_id":"` + validSignupIndustryID + `"}}`,
+			code: http.StatusUnprocessableEntity,
+		},
+		{
+			name: "zero number of employees",
+			body: `{"name":"Wile","email":"wile@example.com","password":"supersecret",` +
+				`"organization":{"name":"Acme Corp","industry_id":"` + validSignupIndustryID + `","number_of_employees":0}}`,
+			code: http.StatusUnprocessableEntity,
+		},
+		{
+			name: "negative number of employees",
+			body: `{"name":"Wile","email":"wile@example.com","password":"supersecret",` +
+				`"organization":{"name":"Acme Corp","industry_id":"` + validSignupIndustryID + `","number_of_employees":-1}}`,
 			code: http.StatusUnprocessableEntity,
 		},
 	}
@@ -112,6 +158,7 @@ func TestSignupMapsUseCaseFailures(t *testing.T) {
 		code int
 	}{
 		{name: "duplicate user", err: domain.ErrUserAlreadyExists, code: http.StatusConflict},
+		{name: "unknown industry", err: orgdomain.ErrIndustryNotFound, code: http.StatusUnprocessableEntity},
 		{name: "rolled back transaction", err: errors.New("pgx: forced failure"), code: http.StatusInternalServerError},
 	}
 
@@ -123,7 +170,11 @@ func TestSignupMapsUseCaseFailures(t *testing.T) {
 				"name": "Wile E. Coyote",
 				"email": "wile@example.com",
 				"password": "supersecret",
-				"organization_name": "Acme Corp"
+				"organization": {
+					"name": "Acme Corp",
+					"industry_id": "`+validSignupIndustryID+`",
+					"number_of_employees": 25
+				}
 			}`)
 
 			assert.Equal(t, test.code, rec.Code)

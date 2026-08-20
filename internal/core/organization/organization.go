@@ -18,6 +18,9 @@ func Organization() fx.Option {
 			func(pg *database.PgConn) domain.OrganizationRepository {
 				return persistence.NewOrganizationRepository(pg.Pool())
 			},
+			func(pg *database.PgConn) domain.IndustryRepository {
+				return persistence.NewIndustryRepository(pg.Pool())
+			},
 			func(pg *database.PgConn) domain.MembershipRepository {
 				return persistence.NewMembershipRepository(pg.Pool())
 			},

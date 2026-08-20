@@ -150,7 +150,6 @@ func TestConfirmPasswordResetRotatesThePasswordBurnsTheTokenAndRevokesSessions(t
 	user := createConfirmResetUser(t, pool)
 	rawToken, token := seedConfirmResetToken(t, pool, user.Id, time.Now().Add(passwordResetTokenTTL))
 
-	// A session that predates the reset: it must not survive it.
 	rawRefresh := plantConfirmResetSession(t, store, user.Id.String())
 	_, err := store.Validate(ctx, rawRefresh)
 	require.NoError(t, err, "the planted session must be live before the reset, or the assertion below proves nothing")
