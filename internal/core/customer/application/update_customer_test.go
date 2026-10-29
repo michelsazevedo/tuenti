@@ -14,7 +14,7 @@ import (
 )
 
 func newUpdateCustomerUseCase(pgConn *database.PgConn) *UpdateCustomer {
-	return NewUpdateCustomer(database.NewUnitOfWork(pgConn))
+	return NewUpdateCustomer(persistence.NewCustomerRepository(pgConn.Pool()))
 }
 
 func updateCustomerFixture(t *testing.T, pgConn *database.PgConn, organizationID pgtype.UUID) *domain.Customer {
@@ -34,7 +34,7 @@ func TestUpdateCustomerRejectsInvalidAggregatesWithoutTouchingPersistence(t *tes
 			input.ID = customerTestID
 			tt.mutate(input)
 
-			updated, err := NewUpdateCustomer(newUnreachableUnitOfWork()).UpdateCustomer(customerTestContext(t), input)
+			updated, err := NewUpdateCustomer(newUnreachableCustomerRepository(t)).UpdateCustomer(customerTestContext(t), input)
 
 			require.ErrorIs(t, err, tt.wantErr, "the use case must surface the violated domain rule verbatim")
 			assert.Nil(t, updated)

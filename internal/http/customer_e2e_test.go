@@ -74,7 +74,6 @@ func newCustomerE2EEnv(t *testing.T) *customerE2EEnv {
 	t.Cleanup(func() { _ = client.Close() })
 
 	pool := pgConn.Pool()
-	uow := database.NewUnitOfWork(pgConn)
 	users := identitypersistence.NewUserRepository(pool)
 	refreshStore := identitypersistence.NewRefreshTokenStore(client)
 	memberships := orgpersistence.NewMembershipRepository(pool)
@@ -87,10 +86,10 @@ func newCustomerE2EEnv(t *testing.T) *customerE2EEnv {
 	)
 
 	customer := customerapi.NewCustomerHandler(
-		customerapp.NewCreateCustomer(uow),
+		customerapp.NewCreateCustomer(customers),
 		customerapp.NewGetCustomer(customers),
 		customerapp.NewListCustomers(customers),
-		customerapp.NewUpdateCustomer(uow),
+		customerapp.NewUpdateCustomer(customers),
 		customerapp.NewDeleteCustomer(customers),
 	)
 

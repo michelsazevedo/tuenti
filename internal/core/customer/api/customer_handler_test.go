@@ -68,13 +68,12 @@ func newCustomerEnv(t *testing.T) *customerEnv {
 
 	pool := pgConn.Pool()
 	customers := persistence.NewCustomerRepository(pool)
-	uow := database.NewUnitOfWork(pgConn)
 
 	handler := api.NewCustomerHandler(
-		application.NewCreateCustomer(uow),
+		application.NewCreateCustomer(customers),
 		application.NewGetCustomer(customers),
 		application.NewListCustomers(customers),
-		application.NewUpdateCustomer(uow),
+		application.NewUpdateCustomer(customers),
 		application.NewDeleteCustomer(customers),
 	)
 

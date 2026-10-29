@@ -3,19 +3,16 @@ package application
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/michelsazevedo/tuenti/internal/core/customer/domain"
-	"github.com/michelsazevedo/tuenti/internal/core/customer/persistence"
-	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
+	"github.com/michelsazevedo/tuenti/internal/infrastructure/observability"
 )
 
 type UpdateCustomer struct {
-	uow *database.UnitOfWork
+	repo domain.CustomerRepository
 }
 
-func NewUpdateCustomer(uow *database.UnitOfWork) *UpdateCustomer {
-	return &UpdateCustomer{uow: uow}
+func NewUpdateCustomer(repo domain.CustomerRepository) *UpdateCustomer {
+	return &UpdateCustomer{repo: repo}
 }
 
 func (uc *UpdateCustomer) UpdateCustomer(ctx context.Context, customer *domain.Customer) (*domain.Customer, error) {
@@ -23,14 +20,21 @@ func (uc *UpdateCustomer) UpdateCustomer(ctx context.Context, customer *domain.C
 		return nil, err
 	}
 
-	err := uc.uow.Do(ctx, func(tx pgx.Tx) error {
-		return persistence.NewCustomerRepository(tx).Update(ctx, customer)
-	})
-	if err != nil {
+	if err := uc.repo.Update(ctx, customer); err != nil {
 		return nil, err
 	}
 
-	logCustomerEvent(ctx, eventCustomerUpdated, "Customer updated", customer.OrganizationID, customer.ID)
+	logCustomerUpdated(ctx, customer)
 
 	return customer, nil
+}
+
+func logCustomerUpdated(ctx context.Context, customer *domain.Customer) {
+	logger := observability.Logger(ctx)
+
+	logger.Info().
+		Str("event", "customer_updated").
+		Str("customer_id", customer.ID.String()).
+		Str("organization_id", customer.OrganizationID.String()).
+		Msg("Customer updated")
 }

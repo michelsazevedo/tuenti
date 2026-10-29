@@ -24,11 +24,39 @@ var (
 	customerTestID             = pgtype.UUID{Bytes: [16]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10}, Valid: true}
 )
 
-// newUnreachableUnitOfWork returns a UnitOfWork with no connection behind it.
-// Any attempt to open a transaction dereferences a nil pool and panics, so a
-// test that passes with it proves the use case never reached persistence.
-func newUnreachableUnitOfWork() *database.UnitOfWork {
-	return database.NewUnitOfWork(nil)
+// unreachableCustomerRepository fails the test on any call, so a test that
+// passes with it proves the use case never reached persistence.
+type unreachableCustomerRepository struct {
+	t *testing.T
+}
+
+func newUnreachableCustomerRepository(t *testing.T) domain.CustomerRepository {
+	return &unreachableCustomerRepository{t: t}
+}
+
+func (r *unreachableCustomerRepository) Create(ctx context.Context, customer *domain.Customer) error {
+	r.t.Fatal("unexpected call to Create")
+	return nil
+}
+
+func (r *unreachableCustomerRepository) Update(ctx context.Context, customer *domain.Customer) error {
+	r.t.Fatal("unexpected call to Update")
+	return nil
+}
+
+func (r *unreachableCustomerRepository) Delete(ctx context.Context, organizationID, id pgtype.UUID) error {
+	r.t.Fatal("unexpected call to Delete")
+	return nil
+}
+
+func (r *unreachableCustomerRepository) FindByID(ctx context.Context, organizationID, id pgtype.UUID) (*domain.Customer, error) {
+	r.t.Fatal("unexpected call to FindByID")
+	return nil, nil
+}
+
+func (r *unreachableCustomerRepository) List(ctx context.Context, filter domain.ListCustomersFilter) ([]*domain.Customer, error) {
+	r.t.Fatal("unexpected call to List")
+	return nil, nil
 }
 
 func newCustomerTestPgConn(t *testing.T) *database.PgConn {

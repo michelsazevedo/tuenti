@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/michelsazevedo/tuenti/internal/core/customer/persistence"
-	"github.com/michelsazevedo/tuenti/internal/infrastructure/database"
 )
 
 func TestCreateCustomerRejectsInvalidAggregatesWithoutTouchingPersistence(t *testing.T) {
@@ -17,7 +16,7 @@ func TestCreateCustomerRejectsInvalidAggregatesWithoutTouchingPersistence(t *tes
 			input := newCustomerInput(t, customerTestOrganizationID)
 			tt.mutate(input)
 
-			created, err := NewCreateCustomer(newUnreachableUnitOfWork()).CreateCustomer(customerTestContext(t), input)
+			created, err := NewCreateCustomer(newUnreachableCustomerRepository(t)).CreateCustomer(customerTestContext(t), input)
 
 			require.ErrorIs(t, err, tt.wantErr, "the use case must surface the violated domain rule verbatim")
 			assert.Nil(t, created, "a rejected aggregate must not be handed back as if it were created")
@@ -32,7 +31,7 @@ func TestCreateCustomerPersistsACustomer(t *testing.T) {
 	organizationID := customerTestOrganization(t, pgConn.Pool())
 	input := newCustomerInput(t, organizationID)
 
-	created, err := NewCreateCustomer(database.NewUnitOfWork(pgConn)).CreateCustomer(ctx, input)
+	created, err := NewCreateCustomer(persistence.NewCustomerRepository(pgConn.Pool())).CreateCustomer(ctx, input)
 
 	require.NoError(t, err)
 	require.NotNil(t, created)
@@ -42,7 +41,7 @@ func TestCreateCustomerPersistsACustomer(t *testing.T) {
 	assert.Equal(t, "US", created.Address.Country, "validation must normalize the country before it is written")
 
 	found, err := persistence.NewCustomerRepository(pgConn.Pool()).FindByID(ctx, organizationID, created.ID)
-	require.NoError(t, err, "the committed customer must be readable outside its transaction")
+	require.NoError(t, err, "the created customer must be readable through the repository")
 
 	assert.Equal(t, input.Name, found.Name)
 	assert.Equal(t, input.Email, found.Email)
@@ -59,7 +58,7 @@ func TestCreateCustomerEmitsIdentifiersOnly(t *testing.T) {
 
 	logs := captureLogs(t)
 
-	created, err := NewCreateCustomer(database.NewUnitOfWork(pgConn)).CreateCustomer(customerTestContext(t), input)
+	created, err := NewCreateCustomer(persistence.NewCustomerRepository(pgConn.Pool())).CreateCustomer(customerTestContext(t), input)
 	require.NoError(t, err)
 
 	var entry map[string]any
@@ -80,7 +79,7 @@ func TestCreateCustomerDoesNotLogARejectedCustomer(t *testing.T) {
 	input := newCustomerInput(t, customerTestOrganizationID)
 	input.Name = ""
 
-	_, err := NewCreateCustomer(newUnreachableUnitOfWork()).CreateCustomer(customerTestContext(t), input)
+	_, err := NewCreateCustomer(newUnreachableCustomerRepository(t)).CreateCustomer(customerTestContext(t), input)
 	require.Error(t, err)
 
 	assert.Empty(t, logs.String(), "a rejected create must not be reported as one that happened")

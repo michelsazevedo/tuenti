@@ -6,6 +6,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/michelsazevedo/tuenti/internal/core/customer/domain"
+	"github.com/michelsazevedo/tuenti/internal/infrastructure/observability"
 )
 
 type DeleteCustomer struct {
@@ -21,7 +22,17 @@ func (uc *DeleteCustomer) DeleteCustomer(ctx context.Context, organizationID, id
 		return err
 	}
 
-	logCustomerEvent(ctx, eventCustomerDeleted, "Customer deleted", organizationID, id)
+	logCustomerDeleted(ctx, organizationID, id)
 
 	return nil
+}
+
+func logCustomerDeleted(ctx context.Context, organizationID, id pgtype.UUID) {
+	logger := observability.Logger(ctx)
+
+	logger.Info().
+		Str("event", "customer_deleted").
+		Str("customer_id", id.String()).
+		Str("organization_id", organizationID.String()).
+		Msg("Customer deleted")
 }

@@ -195,9 +195,6 @@ func listCustomersFilter(c echo.Context, organizationID pgtype.UUID) (domain.Lis
 	}, nil
 }
 
-// failure maps use case errors onto HTTP. Every domain.ValidationError
-// (required fields, invalid email/country, duplicate email) is a 422; the
-// error message is a fixed domain string and never echoes customer PII.
 func (h *customerHandler) failure(c echo.Context, err error, event string) error {
 	if errors.Is(err, domain.ErrCustomerNotFound) {
 		return echo.NewHTTPError(http.StatusNotFound, domain.ErrCustomerNotFound.Error())

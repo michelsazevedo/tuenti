@@ -106,7 +106,7 @@ func TestDeleteCustomer(t *testing.T) {
 	}
 }
 
-func TestLogCustomerEventEmitsIdentifiersOnly(t *testing.T) {
+func TestDeleteCustomerLogsIdentifiersOnly(t *testing.T) {
 	logs := captureLogs(t)
 
 	err := NewDeleteCustomer(&deleteSpyCustomerRepository{}).
