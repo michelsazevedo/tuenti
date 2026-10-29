@@ -7,6 +7,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	catalogapi "github.com/michelsazevedo/tuenti/internal/core/catalog/api"
+	customerapi "github.com/michelsazevedo/tuenti/internal/core/customer/api"
 	"github.com/michelsazevedo/tuenti/internal/core/identity/api"
 	orgapi "github.com/michelsazevedo/tuenti/internal/core/organization/api"
 	orgdomain "github.com/michelsazevedo/tuenti/internal/core/organization/domain"
@@ -26,6 +27,7 @@ func RegisterRoutes(
 	org orgapi.OrganizationHandler,
 	inv orgapi.InvitationHandler,
 	item catalogapi.ItemHandler,
+	customer customerapi.CustomerHandler,
 ) {
 	requireAuth := m.RequireAuth(cfg.Settings.Secret, cfg.Settings.Environment)
 	requireManagerOrAdmin := m.RequireOrganizationPermission(memberships, orgdomain.AuthorizationPolicy{}, m.RequireCanManageMembers)
@@ -88,4 +90,11 @@ func RegisterRoutes(
 	items.GET("/:id", item.Get)
 	items.PUT("/:id", item.Update, requireManagerOrAdmin)
 	items.DELETE("/:id", item.Delete, requireManagerOrAdmin)
+
+	customers := e.Group("/customers", requireAuth)
+	customers.POST("", customer.Create, requireManagerOrAdmin)
+	customers.GET("", customer.List)
+	customers.GET("/:id", customer.Get)
+	customers.PUT("/:id", customer.Update, requireManagerOrAdmin)
+	customers.DELETE("/:id", customer.Delete, requireManagerOrAdmin)
 }

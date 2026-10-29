@@ -22,6 +22,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	catalogapi "github.com/michelsazevedo/tuenti/internal/core/catalog/api"
+	customerapi "github.com/michelsazevedo/tuenti/internal/core/customer/api"
 	"github.com/michelsazevedo/tuenti/internal/core/identity/api"
 	"github.com/michelsazevedo/tuenti/internal/core/identity/application"
 	"github.com/michelsazevedo/tuenti/internal/core/identity/domain"
@@ -161,6 +162,7 @@ func newResetEnv(t *testing.T) *resetEnv {
 		orgapi.NewOrganizationHandler(orgapp.NewGetOrganizationByID(orgpersistence.NewOrganizationRepository(pool))),
 		orgapi.NewInvitationHandler(nil, nil, nil, nil),
 		catalogapi.NewItemHandler(nil, nil, nil, nil, nil),
+		customerapi.NewCustomerHandler(nil, nil, nil, nil, nil),
 	)
 
 	return &resetEnv{

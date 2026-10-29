@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/michelsazevedo/tuenti/internal/core/catalog"
+	"github.com/michelsazevedo/tuenti/internal/core/customer"
 	"github.com/michelsazevedo/tuenti/internal/core/identity"
 	"github.com/michelsazevedo/tuenti/internal/core/organization"
 	"github.com/michelsazevedo/tuenti/internal/http"
@@ -15,7 +16,13 @@ import (
 )
 
 func main() {
-	app := fx.New(
+	fx.New(appOptions()...).Run()
+}
+
+// appOptions is the application's dependency graph. It lives apart from main
+// so main_test.go validates exactly what main runs.
+func appOptions() []fx.Option {
+	return []fx.Option{
 		fx.WithLogger(logging.NewZerologfx),
 		database.Db(),
 		redis.Redis(),
@@ -24,8 +31,7 @@ func main() {
 		identity.Identity(),
 		organization.Organization(),
 		catalog.Catalog(),
+		customer.Customer(),
 		http.Http(),
-	)
-
-	app.Run()
+	}
 }

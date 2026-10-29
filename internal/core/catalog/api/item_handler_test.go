@@ -25,6 +25,7 @@ import (
 	"github.com/michelsazevedo/tuenti/internal/core/catalog/application"
 	"github.com/michelsazevedo/tuenti/internal/core/catalog/domain"
 	"github.com/michelsazevedo/tuenti/internal/core/catalog/persistence"
+	customerapi "github.com/michelsazevedo/tuenti/internal/core/customer/api"
 	identityapi "github.com/michelsazevedo/tuenti/internal/core/identity/api"
 	identityapp "github.com/michelsazevedo/tuenti/internal/core/identity/application"
 	orgapi "github.com/michelsazevedo/tuenti/internal/core/organization/api"
@@ -97,6 +98,7 @@ func newItemEnv(t *testing.T) *itemEnv {
 		orgapi.NewOrganizationHandler(nil),
 		orgapi.NewInvitationHandler(nil, nil, nil, nil),
 		handler,
+		customerapi.NewCustomerHandler(nil, nil, nil, nil, nil),
 	)
 
 	return &itemEnv{server: server, pool: pool, conf: conf, items: items}
