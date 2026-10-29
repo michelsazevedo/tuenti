@@ -11,7 +11,7 @@ import (
 	"github.com/michelsazevedo/tuenti/internal/infrastructure/observability"
 )
 
-var redactedQueryParams = []string{"token", "code", "secret", "access_token"}
+var redactedQueryParams = []string{"token", "code", "secret", "access_token", "search"}
 
 func RequestURI(r *http.Request) string {
 	if r.URL.RawQuery == "" {
