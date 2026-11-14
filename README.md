@@ -74,4 +74,4 @@ On failure, it logs which seed failed and why, then exits `1`.
 
 
 ## License
-Copyright © 2026. It is free software, and may be redistributed under the terms specified in the (LICENSE)[https://github.com/michelsazevedo/tuenti/blob/master/LICENSE] file
+Copyright © 2026. It is free software, and may be redistributed under the terms specified in the [LICENSE](https://github.com/michelsazevedo/tuenti/blob/master/LICENSE) file
